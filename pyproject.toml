@@ -1,0 +1,17 @@
+[project]
+name = "gestion-tienda-ia"
+version = "0.1.0"
+description = "Gestion de tienda con agentes CrewAI - EP2 ISY0101 Duoc UC"
+requires-python = ">=3.11"
+dependencies = [
+    "crewai[litellm]>=1.15.0",
+    "python-dotenv>=1.0.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-api-python-client>=2.140.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0.0"]
+
+[tool.uv]
+package = false
