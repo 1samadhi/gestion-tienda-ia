@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 credentials.json
 gmail_token.json
+tienda.db
