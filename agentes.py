@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from gmail_tool import enviar_correo as _enviar_correo
 from stock import (
     consultar_stock,
+    historial_producto,
     productos_bajo_minimo,
     registrar_reposicion,
     registrar_venta,
@@ -79,6 +80,16 @@ def tool_bajo_minimo(filtro: str = "") -> str:
     )
 
 
+@tool("historial de movimientos del producto")
+def tool_historial_producto(producto_id: int) -> str:
+    """Memoria de largo plazo: ventas e ingresos pasados de un producto,
+    para decidir si conviene reponer ahora o esperar."""
+    movs = historial_producto(producto_id)
+    if not movs:
+        return "Sin movimientos registrados para este producto."
+    return "\n".join(f"{m['fecha']} — {m['tipo']} de {m['cantidad']}" for m in movs)
+
+
 @tool("registrar venta")
 def tool_registrar_venta(producto_id: int, cantidad: int) -> str:
     """Descuenta stock por una venta. Falla si no alcanza el stock."""
@@ -109,7 +120,7 @@ def crear_agentes() -> dict[str, Agent]:
         role="Encargado de inventario",
         goal="Informar el estado del stock con precision, sin modificar nada",
         backstory="Solo consultas. Nunca decides ventas ni compras.",
-        tools=[tool_consultar_stock, tool_bajo_minimo],
+        tools=[tool_consultar_stock, tool_bajo_minimo, tool_historial_producto],
         llm=llm,
         verbose=False,
     )
@@ -132,7 +143,7 @@ def crear_agentes() -> dict[str, Agent]:
     return {"inventario": inventario, "ventas": ventas, "compras": compras}
 
 
-def crear_crew(mensaje: str) -> Crew:
+def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
     """Crew general: el manager delega entre Inventario y Ventas.
 
     No se usa para enviar correos — ver `generar_orden_compra` para esa ruta.
@@ -140,6 +151,12 @@ def crear_crew(mensaje: str) -> Crew:
     siempre invoca la delegacion real; una accion con efecto en el mundo
     real (mandar un correo de verdad) no puede depender de que el LLM
     decida ejecutarla.
+
+    Memoria corto plazo (IE3): nativa de CrewAI (`memory=True`), con
+    `root_scope` por `conversacion_id` — mismo rol que el `thread_id` de
+    LangGraph, aisla lo que un cliente pregunto de lo que pregunto otro.
+    Embedder local (`sentence-transformer`): Groq no ofrece endpoint de
+    embeddings, mismo motivo por el que el curso usa HuggingFace en el RAG.
     """
     agentes = crear_agentes()
     llm = modelo()
@@ -166,6 +183,12 @@ def crear_crew(mensaje: str) -> Crew:
         tasks=[tarea],
         process=Process.hierarchical,
         manager_agent=manager,
+        memory=True,
+        embedder={
+            "provider": "sentence-transformer",
+            "config": {"model_name": "all-MiniLM-L6-v2"},
+        },
+        name=f"tienda-{conversacion_id}",
         verbose=True,
     )
 

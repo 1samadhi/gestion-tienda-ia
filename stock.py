@@ -95,3 +95,18 @@ def registrar_reposicion(producto_id: int, cantidad: int) -> Producto:
         )
         fila = con.execute("SELECT * FROM productos WHERE id = ?", (producto_id,)).fetchone()
     return _fila_a_producto(fila)
+
+
+def historial_producto(producto_id: int, limite: int = 10) -> list[dict]:
+    """Memoria de largo plazo del dominio: los movimientos ya quedan en
+    SQLite, persistentes entre sesiones. No hace falta un vector store
+    para esto — la pregunta tipica ("cuanto se vendio este mes") es una
+    consulta estructurada, no una busqueda semantica de texto libre.
+    """
+    with conectar() as con:
+        filas = con.execute(
+            """SELECT tipo, cantidad, fecha FROM movimientos
+               WHERE producto_id = ? ORDER BY fecha DESC LIMIT ?""",
+            (producto_id, limite),
+        ).fetchall()
+    return [dict(f) for f in filas]
