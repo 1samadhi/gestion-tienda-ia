@@ -92,9 +92,25 @@ def tool_historial_producto(producto_id: int) -> str:
 
 @tool("registrar venta")
 def tool_registrar_venta(producto_id: int, cantidad: int) -> str:
-    """Descuenta stock por una venta. Falla si no alcanza el stock."""
+    """Descuenta stock por una venta. Falla si no alcanza el stock.
+
+    Planificacion adaptativa: si la venta deja el producto en su minimo
+    o por debajo, dispara la reposicion sola (no espera a que alguien
+    pregunte). El disparo es deterministico — se decide con un numero,
+    no con que el LLM se acuerde de avisar — pero el contenido del
+    correo lo sigue redactando el agente de Compras.
+    """
     p = registrar_venta(producto_id, cantidad)
-    return f"Venta registrada. {p.nombre} queda en {p.stock_actual} unidades."
+    mensaje = f"Venta registrada. {p.nombre} queda en {p.stock_actual} unidades."
+
+    if p.stock_actual <= p.stock_minimo:
+        cantidad_pedido = max(p.stock_minimo * 2 - p.stock_actual, p.stock_minimo)
+        resultado_compra = generar_orden_compra(p.nombre, cantidad_pedido, p.proveedor_email)
+        mensaje += (
+            f" Quedo en el minimo ({p.stock_minimo}) o bajo el, se genero la "
+            f"reposicion automatica: {resultado_compra}"
+        )
+    return mensaje
 
 
 @tool("registrar reposicion")
