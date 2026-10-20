@@ -39,7 +39,21 @@ cp .env.example .env                # completar GROQ_API_KEY
 uv run python agentes.py            # demo: una venta de ejemplo
 uv run pytest test_stock.py -v      # 10 tests de la capa determinista
 uv run python medir.py              # medicion de tokens/latencia (3 casos)
+uv run streamlit run app.py         # front-end: panel de stock + chat con los agentes
 ```
+
+### Front-end (Streamlit)
+
+`app.py` tiene dos zonas con costo muy distinto, a proposito:
+
+- **Panel de stock y alertas** (arriba): llama directo a `stock.py`, sin
+  LLM — instantaneo, cero tokens. Para "¿cuánto stock queda?" no hace
+  falta pasar por un agente.
+- **Chat** (abajo): cualquier mensaje corre el manager jerárquico
+  completo (`crear_crew`) — real, con el costo medido en `MEDICION.md`
+  (60-80 segundos, 15 000-20 000 tokens por mensaje). Sirve para pedidos
+  que de verdad necesitan razonar ("vende 2 unidades y avisame si hay que
+  reponer"), no para consultas simples.
 
 ## 1. Decisión de runtime (ADR)
 
