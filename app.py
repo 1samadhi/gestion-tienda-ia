@@ -27,6 +27,7 @@ import streamlit as st
 
 from agentes import crear_crew, modelo
 from db import DB as RUTA_DB
+from guardrails import detecto_injection, sanitizar_entrada
 from stock import consultar_stock, historial_producto, productos_bajo_minimo
 
 RAIZ = Path(__file__).parent
@@ -109,6 +110,17 @@ with tab_chat:
 
     mensaje = st.chat_input("Ej: Vende 2 unidades del Taladro percutor")
     if mensaje:
+        if detecto_injection(mensaje):
+            st.session_state.registro.append(
+                {
+                    "hora": datetime.now().strftime("%H:%M:%S"),
+                    "mensaje": f"⚠️ intento de injection: {mensaje[:50]}",
+                    "segundos": 0,
+                    "tokens": 0,
+                }
+            )
+        mensaje_limpio = sanitizar_entrada(mensaje)
+
         st.session_state.mensajes.append(("user", mensaje))
         with st.chat_message("user"):
             st.markdown(mensaje)
@@ -117,7 +129,7 @@ with tab_chat:
             with st.spinner("El manager esta delegando la tarea... (puede tardar un minuto)"):
                 t0 = time.perf_counter()
                 try:
-                    crew = crear_crew(mensaje, conversacion_id=st.session_state.conversacion_id)
+                    crew = crear_crew(mensaje_limpio, conversacion_id=st.session_state.conversacion_id)
                     respuesta = str(crew.kickoff())
                     m = getattr(crew, "usage_metrics", None)
                     tokens = getattr(m, "total_tokens", 0) or 0
