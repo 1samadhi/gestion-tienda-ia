@@ -14,6 +14,7 @@ justificar el framework (ver ADR en el README).
 
 import os
 
+import litellm
 from crewai import LLM, Agent, Crew, Process, Task
 from crewai.tools import tool
 from dotenv import load_dotenv
@@ -28,6 +29,15 @@ from stock import (
 )
 
 load_dotenv()
+
+# Observabilidad (opcional, no rompe nada si no hay key): litellm manda cada
+# llamada real a Groq a LangSmith -- input/output completo (el "thinking"),
+# tokens y latencia por paso. No es migrar a LangChain, es usar su
+# herramienta de trazas por debajo de CrewAI, que ya corre sobre litellm.
+# Activar: LANGSMITH_API_KEY + LANGSMITH_TRACING=true en el .env.
+if os.getenv("LANGSMITH_TRACING", "").lower() == "true" and os.getenv("LANGSMITH_API_KEY"):
+    litellm.success_callback = ["langsmith"]
+    litellm.failure_callback = ["langsmith"]
 
 
 class LLMGroq(LLM):
