@@ -49,9 +49,42 @@ class LLMGroq(LLM):
         return super()._format_messages_for_provider(limpios)
 
 
-def modelo() -> LLMGroq:
-    return LLMGroq(
-        model=f"groq/{os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b')}",
+# Modelos de Groq con cupo SEPARADO (8000 tokens/minuto es por modelo, no
+# por cuenta). Si el principal se queda sin cupo, salta al siguiente antes
+# de darse por vencido.
+MODELOS_FALLBACK = [
+    os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
+]
+
+
+class LLMConFallback(LLMGroq):
+    """Si Groq devuelve rate limit, reintenta con el siguiente modelo de
+    MODELOS_FALLBACK en vez de fallar. Cada modelo tiene su propio balde
+    de 8000 tokens/minuto — rotar entre ellos evita la espera, no la cuota
+    total (siguen siendo recursos finitos, solo que separados)."""
+
+    def call(self, messages, **kwargs):
+        import litellm as _litellm
+
+        errores = []
+        for modelo_intento in MODELOS_FALLBACK:
+            self.model = f"groq/{modelo_intento}"
+            try:
+                return super().call(messages, **kwargs)
+            except _litellm.RateLimitError as e:
+                errores.append(f"{modelo_intento}: rate limit")
+                continue
+        raise RuntimeError(
+            f"Los {len(MODELOS_FALLBACK)} modelos de fallback estan sin cupo: "
+            + "; ".join(errores)
+        )
+
+
+def modelo() -> LLMConFallback:
+    return LLMConFallback(
+        model=f"groq/{MODELOS_FALLBACK[0]}",
         temperature=0.2,
     )
 

@@ -18,8 +18,10 @@ Uso:
     uv run streamlit run app.py
 """
 
+import io
 import time
 import uuid
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -104,8 +106,11 @@ with tab_chat:
         "instantaneo."
     )
 
-    for autor, texto in st.session_state.mensajes:
+    for autor, texto, pensamiento in st.session_state.mensajes:
         with st.chat_message(autor):
+            if pensamiento:
+                with st.expander("🧠 Ver el thinking (lo que hizo cada agente)"):
+                    st.code(pensamiento, language=None)
             st.markdown(texto)
 
     mensaje = st.chat_input("Ej: Vende 2 unidades del Taladro percutor")
@@ -121,16 +126,18 @@ with tab_chat:
             )
         mensaje_limpio = sanitizar_entrada(mensaje)
 
-        st.session_state.mensajes.append(("user", mensaje))
+        st.session_state.mensajes.append(("user", mensaje, None))
         with st.chat_message("user"):
             st.markdown(mensaje)
 
         with st.chat_message("assistant"):
             with st.spinner("El manager esta delegando la tarea... (puede tardar un minuto)"):
                 t0 = time.perf_counter()
+                buffer_log = io.StringIO()
                 try:
-                    crew = crear_crew(mensaje_limpio, conversacion_id=st.session_state.conversacion_id)
-                    respuesta = str(crew.kickoff())
+                    with redirect_stdout(buffer_log):
+                        crew = crear_crew(mensaje_limpio, conversacion_id=st.session_state.conversacion_id)
+                        respuesta = str(crew.kickoff())
                     m = getattr(crew, "usage_metrics", None)
                     tokens = getattr(m, "total_tokens", 0) or 0
                 except Exception as e:
@@ -144,8 +151,12 @@ with tab_chat:
                         "modelo (tiene su propio cupo separado)."
                     )
                 segundos = time.perf_counter() - t0
+                pensamiento = buffer_log.getvalue().strip() or None
+            if pensamiento:
+                with st.expander("🧠 Ver el thinking (lo que hizo cada agente)"):
+                    st.code(pensamiento, language=None)
             st.markdown(respuesta)
-        st.session_state.mensajes.append(("assistant", respuesta))
+        st.session_state.mensajes.append(("assistant", respuesta, pensamiento))
         st.session_state.registro.append(
             {
                 "hora": datetime.now().strftime("%H:%M:%S"),
