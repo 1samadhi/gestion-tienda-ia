@@ -27,7 +27,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from agentes import crear_crew, modelo
+from agentes import crear_crew, forzar_envio_a_langsmith, modelo
 from db import DB as RUTA_DB
 from guardrails import detecto_injection, sanitizar_entrada
 from stock import consultar_stock, historial_producto, productos_bajo_minimo
@@ -138,6 +138,7 @@ with tab_chat:
                     with redirect_stdout(buffer_log):
                         crew = crear_crew(mensaje_limpio, conversacion_id=st.session_state.conversacion_id)
                         respuesta = str(crew.kickoff())
+                    forzar_envio_a_langsmith()
                     m = getattr(crew, "usage_metrics", None)
                     tokens = getattr(m, "total_tokens", 0) or 0
                 except Exception as e:

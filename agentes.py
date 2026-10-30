@@ -40,6 +40,23 @@ if os.getenv("LANGSMITH_TRACING", "").lower() == "true" and os.getenv("LANGSMITH
     litellm.failure_callback = ["langsmith"]
 
 
+def forzar_envio_a_langsmith() -> None:
+    """litellm encola las trazas y las manda cada 5s, pero solo si hay un
+    event loop de asyncio corriendo -- CrewAI corre sincronico (kickoff()),
+    asi que la cola nunca se vacia sola. Llamar despues de cada kickoff()
+    para vaciarla a mano. No hace nada si LangSmith esta apagado."""
+    if os.getenv("LANGSMITH_TRACING", "").lower() != "true":
+        return
+    import asyncio
+
+    from litellm.integrations.langsmith import LangsmithLogger
+    from litellm.litellm_core_utils.litellm_logging import _in_memory_loggers
+
+    logger = next((c for c in _in_memory_loggers if isinstance(c, LangsmithLogger)), None)
+    if logger is not None and logger.log_queue:
+        asyncio.run(logger.async_send_batch())
+
+
 class LLMGroq(LLM):
     """Groq rechaza con 400 el `cache_breakpoint` que CrewAI 1.15 agrega
     al mensaje de sistema para el prompt caching de Anthropic."""
