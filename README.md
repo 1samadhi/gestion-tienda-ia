@@ -1,216 +1,132 @@
 # Gestión de Tienda IA
 
-Agentes sobre stock de una tienda genérica (productos, movimientos,
-proveedores). No es específico de un rubro: sirve para ferretería, almacén,
-librería, etc.
+Agentes CrewAI sobre el stock de una tienda (productos, ventas, proveedores),
+con observabilidad y controles de seguridad. ISY0101, Duoc UC.
 
-EP2 ISY0101, Duoc UC. Evolución conceptual de `asistente-pedidos360` (EP1),
-sin la infraestructura AWS que ese proyecto necesitaba.
+## Arquitectura
 
-## Qué hace
-
-Tres agentes con roles acotados (nadie tiene más herramientas de las que
-necesita), coordinados por un manager, sobre una base de stock real en
-SQLite:
-
-- **Inventario** — solo lectura: consulta stock, productos bajo mínimo,
-  historial de movimientos de un producto.
-- **Ventas** — registra ventas. Si una venta deja el stock en o bajo el
-  mínimo, **dispara sola** la reposición (planificación adaptativa, ver
-  `ESQUEMA-PLANIFICACION.md`).
-- **Compras** — el único rol con acceso a Gmail. Redacta y envía órdenes
-  de reposición reales a proveedores.
-
-## Setup
-
-```bash
-uv sync
-uv run python autenticar_gmail.py   # una vez, abre el navegador para el login de Gmail
-uv run python db.py                 # crea tienda.db con datos de demo
-cp .env.example .env                # completar GROQ_API_KEY
+```mermaid
+flowchart LR
+  U[Dueño] --> APP[Streamlit]
+  APP --> F{Filtro}
+  F -- bloqueado --> APP
+  F --> M[Manager]
+  M --> I[Inventario]
+  M --> V[Ventas]
+  V -- "stock ≤ mínimo" --> C[Compras]
+  I & V & C --> DB[(SQLite)]
+  C --> G[Gmail]
+  M & I & V & C --> LLM[Groq]
 ```
 
-`credentials.json`, `gmail_token.json`, `.env` y `tienda.db` no se versionan
-(`.gitignore`) — son credenciales o datos de runtime, no código fuente.
+| Rol | Puede |
+|---|---|
+| Inventario | leer stock, bajo mínimo, historial |
+| Ventas | registrar ventas |
+| Compras | reponer y enviar correo (único con Gmail) |
+| Manager | solo delegar |
 
-### Correr
+La reposición la dispara Python (`stock ≤ mínimo`), no el LLM.
 
-```bash
-uv run python agentes.py            # demo: una venta de ejemplo
-uv run pytest test_stock.py -v      # 10 tests de la capa determinista
-uv run python medir.py              # medicion de tokens/latencia (3 casos)
-uv run streamlit run app.py         # front-end: panel de stock + chat con los agentes
-```
-
-### Front-end (Streamlit)
-
-`app.py` tiene dos zonas con costo muy distinto, a proposito:
-
-- **Panel de stock y alertas** (arriba): llama directo a `stock.py`, sin
-  LLM — instantaneo, cero tokens. Para "¿cuánto stock queda?" no hace
-  falta pasar por un agente.
-- **Chat** (abajo): cualquier mensaje corre el manager jerárquico
-  completo (`crear_crew`) — real, con el costo medido en `MEDICION.md`
-  (60-80 segundos, 15 000-20 000 tokens por mensaje). Sirve para pedidos
-  que de verdad necesitan razonar ("vende 2 unidades y avisame si hay que
-  reponer"), no para consultas simples.
-
-## 1. Decisión de runtime (ADR)
-
-**Contexto:** hay que orquestar un LLM, herramientas, memoria y tres roles
-con objetivos distintos (consultar stock, vender, negociar con un
-proveedor).
-
-**Camino "actual" del curso:** LangGraph (`RA2/IL2.4/0-arquitectura-ra2.md`).
-
-**Decisión de este proyecto: CrewAI.**
-
-**Justificación:** los tres roles tienen prompts de sistema
-*incompatibles* entre sí — "atiendes al cliente, no contactas
-proveedores" (Ventas) choca directamente con "rediactas órdenes y las
-envías" (Compras). Ese es exactamente el criterio que la plantilla del
-curso reserva para CrewAI ("Prompts de sistema incompatibles + proceso"),
-no para un grafo de LangGraph con un único system prompt por nodo.
-
-**Alternativas rechazadas:**
-
-- **`create_agent` + checkpointer (LangGraph)**: resuelve bien memoria +
-  un rol, pero tres roles con prompts incompatibles exigirían simular
-  "sub-agentes" a mano dentro del mismo grafo — reinventar lo que CrewAI
-  ya da con `Agent` + `role`/`backstory`.
-- **`AgentExecutor`**: la propia plantilla del curso lo marca como "leer,
-  no empezar".
-- **Python puro sin LLM para todo**: se usó donde correspondía (ver
-  "capa determinista" abajo) pero no alcanza para razonar sobre lenguaje
-  natural del dueño de la tienda ni para redactar un correo a un
-  proveedor.
-
-**Costo medido de la elección:** `MEDICION.md` — el manager jerárquico +
-memoria nativa de CrewAI cuestan 15 000–20 000 tokens y 60–80 segundos
-por operación simple, dominado por llamadas de soporte (búsqueda de
-memoria, consolidación), no por el trabajo visible. Es el precio real de
-tener 3 roles independientes con memoria persistente en vez de un único
-prompt.
-
-## 2. Vista C4 (contexto)
+## Una petición, paso a paso
 
 ```mermaid
 flowchart TD
-  usuario[Dueño de la tienda] --> crew[Crew CrewAI]
-  crew --> manager[Manager — LLM, decide el rol]
-  manager --> inventario[Inventario — solo lectura]
-  manager --> ventas[Ventas — registrar_venta]
-
-  ventas -- "stock <= minimo? (Python, sin LLM)" --> disparo{Disparo determinista}
-  disparo -- "si" --> compras[Compras — ruta directa, no via manager]
-  compras --> gmail[Gmail API real]
-
-  inventario --> db[(SQLite: productos + movimientos)]
-  ventas --> db
-  compras --> db
-
-  crew --> memoria[(Memoria CrewAI — LanceDB + sentence-transformer)]
-  crew --> groq[Groq — openai/gpt-oss-120b]
+  A[Mensaje] --> B[validacion_entrada]
+  B -- inyección --> X[Bloqueado, sin LLM]
+  B --> C[crew:kickoff]
+  C --> D[llm / tool / memoria]
+  D --> E[Respuesta neutralizada]
+  B & C & D -.-> T[(logs/trazas.jsonl)]
+  D -.-> L[LangSmith]
 ```
 
-Capas:
+Cada etapa queda como evento en la traza: duración, tokens, modelo y estado.
 
-| Capa | En este proyecto |
+## Instalar
+
+```bash
+uv sync
+cp .env.example .env                # GROQ_API_KEY; LangSmith es opcional
+uv run python db.py                 # base de demo
+uv run python autenticar_gmail.py   # una vez, login de Gmail en el navegador
+```
+
+`.env`, `credentials.json`, `gmail_token.json`, `tienda.db` y `logs/` no se versionan.
+
+## Correr
+
+```bash
+uv run streamlit run app.py --server.fileWatcherType none   # app
+uv run pytest -q                                              # tests, sin LLM ni red
+uv run python bateria.py --listar                             # casos de medición
+uv run python bateria.py --todos --repeticiones 3             # gasta cuota de Groq
+```
+
+`bateria.py` reinicia la base antes de cada caso, verifica la respuesta contra
+SQLite y reemplaza el envío de Gmail por un registro local.
+
+## Observabilidad
+
+| Métrica | De dónde sale |
 |---|---|
-| Presentación | script (`agentes.py`), sin UI todavía |
-| Aplicación | `Crew` + `Agent` (CrewAI), `Process.hierarchical` |
-| Dominio | `stock.py` — capa determinista, sin LLM, testeada (`test_stock.py`) |
-| Infraestructura | Groq (LLM), Gmail API (correo real), SQLite (stock), LanceDB (memoria) |
+| Precisión | respuesta comparada contra la base (`bateria.py`) |
+| Consistencia | mismo caso repetido N veces |
+| Latencia (p50, p95) | duración por traza y por etapa |
+| Tokens y llamadas | cada llamada a Groq, medida en `LLMConFallback` |
+| Errores | traza caída vs. errores internos (rate limit, memoria) |
+| Bloqueos | inyecciones cortadas antes del crew |
 
-El patrón clave: **el dominio (`stock.py`) no sabe que existe un LLM.** Es
-Python puro, testeable sin red ni tokens. Los agentes son una capa encima
-que *envuelve* esas funciones como tools — mismo principio que
-`1-architecture_example.py` del curso: clasificar/decidir puede llevar
-LLM, ejecutar la acción de negocio no.
+`observabilidad.py` sigue el formato de `RA3/IL3.1` y `RA3/IL3.2` del curso,
+pero con datos reales del bus de eventos de CrewAI. Los tokens no salen de
+`crew.usage_metrics`, que cuenta el LLM compartido una vez por agente.
 
-## 3. Contratos
+LangSmith (opcional): `LANGSMITH_TRACING=true` y `LANGSMITH_API_KEY` en `.env`.
 
-### Memoria (IE3/IE4)
+## Seguridad
 
-- **Corto plazo** (`memory=True` nativo de CrewAI, `root_scope` derivado
-  del nombre de la crew por `conversacion_id`): aísla lo que preguntó un
-  cliente de lo que preguntó otro. Probado: un segundo turno recordó de
-  qué producto se hablaba sin que se repitiera el nombre.
-- **Largo plazo, semántica** (IE4): CrewAI persiste su memoria como
-  vectores reales en disco (`~/.local/share/gestion-tienda-ia/memory/
-  memories.lance`), con embeddings locales (`sentence-transformer`,
-  `all-MiniLM-L6-v2` — Groq no ofrece endpoint de embeddings).
-- **Largo plazo, de dominio**: la tabla `movimientos` en SQLite ya es
-  persistente entre sesiones. No se montó un vector store para esto — la
-  pregunta típica ("qué pasó con este producto") es una consulta
-  estructurada por ID, no una búsqueda semántica de texto libre. Hacerlo
-  con embeddings habría sido sobre-ingeniería.
+| Riesgo | Control |
+|---|---|
+| Inyección directa | filtro normalizado (tildes, invisibles, homoglifos, base64, rot13) |
+| Inyección indirecta | un nombre de producto con instrucciones no llega al prompt |
+| Argumentos del LLM | cantidades positivas, SQL parametrizado, `LIKE` escapado |
+| Correo a terceros | solo a proveedores registrados en la base |
+| Salida en pantalla | HTML escapado, sin imágenes ni enlaces markdown |
+| Datos personales en logs | correos, RUT y teléfonos redactados |
 
-### Herramientas
+El filtro es la primera capa y se puede evadir (hex, otro idioma, paráfrasis);
+los tests lo dejan escrito. Lo que contiene el daño es el mínimo privilegio y
+la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
 
-| Tool | Rol | Entrada válida | Entrada inválida / qué pasa |
-|---|---|---|---|
-| `consultar_stock` | Inventario | `"Taladro"` → coincidencia parcial | vacío `""` → devuelve todo |
-| `productos_bajo_minimo` | Inventario, Ventas | sin argumentos reales | `filtro` es dummy (ver nota de guión bajo abajo) |
-| `historial_producto` | Inventario | `producto_id` entero existente | ID inexistente → lista vacía, no error |
-| `registrar_venta` | Ventas | `producto_id`, `cantidad` entera positiva | stock insuficiente → `ValueError` explícito, no vende parcial |
-| `registrar_reposicion` | Compras | igual que arriba | producto inexistente → `ValueError` |
-| `enviar_correo_a_proveedor` | Compras (único con Gmail) | destinatario, asunto, cuerpo | sin `gmail_token.json` → falla con instrucción de cómo generarlo |
+## Decisiones
 
-**Nota de un bug real encontrado:** una tool sin parámetros reales hace
-que Groq rechace el JSON Schema (`required` presente sin `properties`).
-El primer intento de arreglo (parámetro `_sin_uso: str = ""`) no funcionó:
-pydantic trata los nombres con guion bajo inicial como atributos
-*privados* y los excluye del schema igual. Solución real: un parámetro
-dummy sin guion bajo (`filtro: str = ""`).
+- **CrewAI y no LangGraph:** tres roles con prompts incompatibles (vender ≠
+  negociar con proveedores), el caso que el curso reserva para un framework de roles.
+- **Lo irreversible no depende del LLM:** la orden de compra se dispara por
+  regla y va directo a Compras, sin pasar por el manager.
+- **Memoria nativa de CrewAI** con embeddings locales (Groq no ofrece
+  embeddings); el historial de movimientos vive en SQLite.
+- **Fallback de modelos:** si Groq devuelve rate limit, se rota entre
+  `gpt-oss-120b`, `qwen3.8-27b` y `gpt-oss-20b` (cupos separados).
 
-### Tope de iteraciones / reintentos
+## Archivos
 
-CrewAI delega en litellm el retry ante `429` de Groq. Se midió en vivo
-durante `medir.py`: cada corrida reintentó varias veces contra el límite
-compartido de 8000 tokens/minuto (por modelo, toda la organización) sin
-caerse — ver `MEDICION.md`.
+| Archivo | Qué es |
+|---|---|
+| `agentes.py` | roles, tools, manager, fallback de modelos |
+| `stock.py`, `db.py` | dominio en Python puro, sin LLM |
+| `guardrails.py` | filtro de entrada, PII, salida segura |
+| `observabilidad.py` | trazas, métricas, analizador |
+| `bateria.py` | casos de medición con verificación |
+| `app.py` | interfaz Streamlit |
+| `test_*.py` | tests sin red |
+| `ESQUEMA-PLANIFICACION.md` | orden de decisión del sistema |
+| `SEGURIDAD-OWASP.md` | mapeo OWASP 2026 |
 
-### Identificación de hilo (memoria)
-
-`conversacion_id` (parámetro de `crear_crew`) — análogo al `thread_id` de
-LangGraph. Se "olvida" simplemente usando un `conversacion_id` nuevo; no
-hay borrado explícito implementado (sería un `rm -rf` sobre la carpeta de
-LanceDB del `root_scope` correspondiente).
-
-## 4. Planificación y decisiones adaptativas (IE5/IE6)
-
-Ver `ESQUEMA-PLANIFICACION.md` — diagrama de prioridades y tres
-implementaciones reales de la misma tarea (enviar un correo) que
-terminaron en comportamientos distintos:
-
-1. Manager automático (`manager_llm`): delegó a Ventas en vez de Compras.
-2. Manager con instrucciones explícitas: razonó correcto, pero no
-   invocó la delegación — se quedó en el diagnóstico.
-3. Ruta directa (`generar_orden_compra`, sin pasar por el manager): correo
-   real enviado, confirmado con ID de Gmail.
-
-Esa progresión (2 intentos fallidos documentados, no ocultados) es la
-base de la decisión arquitectónica: **una acción con efecto real en el
-mundo no puede depender de que el LLM decida ejecutarla.**
-
-## 5. Medición (IE9)
-
-Tabla completa en `MEDICION.md`. Resumen: 3 casos representativos,
-57–82 segundos, 15 000–20 000 tokens cada uno contra `openai/gpt-oss-120b`.
-Hallazgo contraintuitivo (documentado, no escondido): la tarea más
-compleja (venta + reposición + correo) usó *menos* tokens que una venta
-simple, porque el costo real está dominado por las llamadas internas de
-memoria de CrewAI, no por el trabajo visible del agente.
-
-## 6. Referencias
+## Referencias
 
 - CrewAI — <https://docs.crewai.com/>
-- Groq API (modelos `openai/gpt-oss-120b`, `openai/gpt-oss-20b`) —
-  <https://console.groq.com/docs/models>
-- Gmail API (Python, OAuth de escritorio) —
-  <https://developers.google.com/gmail/api/guides>
-- sentence-transformers (embeddings locales) —
-  <https://www.sbert.net/>
-- LanceDB (vector store usado por CrewAI para memoria) —
-  <https://lancedb.github.io/lancedb/>
+- Groq — <https://console.groq.com/docs/models>
+- OWASP Top 10:2025, A05 Injection — <https://owasp.org/Top10/2025/A05_2025-Injection/>
+- OWASP Top 10 for LLM Applications 2026 — <https://genai.owasp.org/>
+- Gmail API — <https://developers.google.com/gmail/api/guides>

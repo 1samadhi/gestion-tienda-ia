@@ -1,5 +1,9 @@
 # Medición de tokens y latencia (corrida representativa)
 
+> Estas cifras vienen de `crew.usage_metrics`, que suma el LLM compartido una
+> vez por agente y al manager dos veces: sobrestiman los tokens. La medición
+> por llamada está en `observabilidad.py` y se corre con `bateria.py`.
+
 `uv run python medir.py` — 3 casos reales contra `openai/gpt-oss-120b` (Groq),
 mismo proceso, memoria nativa activada (`memory=True`).
 

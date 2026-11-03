@@ -26,8 +26,8 @@ Inventario Ventas       (correos NUNCA llegan aca directo,
             ▼
 ┌────────────────────────────┐
 │ 3. Compras (LLM, ruta fija) │  generar_orden_compra() — no pasa por
-│    redacta + envia correo   │  el manager (hallazgo dia 1: el manager
-└────────────────────────────┘  razona bien pero no siempre delega)
+│    redacta + envia correo   │  el manager
+└────────────────────────────┘
 ```
 
 ## Por que esta prioridad y no otra
@@ -50,10 +50,12 @@ Inventario Ventas       (correos NUNCA llegan aca directo,
 |---|---|
 | Venta deja el stock arriba del mínimo | Solo confirma la venta. Nada más. |
 | Venta deja el stock en o bajo el mínimo | Dispara sola la reposición + correo real, sin que nadie pregunte |
-| Tarea de correo, manager automático (`manager_llm`) | Delegó mal, al rol equivocado (Vendedor) |
-| Misma tarea, manager con instrucciones explícitas | Razonó correcto pero no ejecutó la delegación — se quedó en el diagnóstico |
+| Tarea de correo vía manager | Delegó al Vendedor, no a Compras |
+| Misma tarea, manager con instrucciones explícitas | Razonó correcto pero no delegó |
 | Misma tarea, por `generar_orden_compra()` (ruta fija) | Correo real enviado, confirmado con ID de Gmail |
 
-Los tres últimos renglones son la misma tarea, tres implementaciones
-distintas — es la evidencia de por qué se llegó al esquema de arriba y no
-a "todo por el manager".
+La causa de las dos primeras filas era estructural, no de razonamiento: la
+tarea se creaba con `agent=ventas` y CrewAI solo deja al manager delegar al
+agente de la tarea (`crewai/crew.py`, `_update_manager_tools`). Compras nunca
+estuvo disponible. Ya está corregido, y la regla se mantiene: una acción con
+efecto real no depende de que el LLM decida ejecutarla.
