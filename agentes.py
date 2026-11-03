@@ -293,10 +293,11 @@ def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
         verbose=False,
     )
 
+    # Sin `agent`: con un agente asignado, CrewAI le da al manager herramientas
+    # para delegar SOLO a ese agente (crewai/crew.py, _update_manager_tools).
     tarea = Task(
         description=mensaje,
         expected_output="Resultado de la operacion, en lenguaje claro para el dueno.",
-        agent=agentes["ventas"],  # placeholder; el manager reasigna
     )
     return Crew(
         agents=list(agentes.values()),

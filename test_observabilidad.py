@@ -147,3 +147,15 @@ def test_kickoff_no_cuenta_como_etapa_mas_lenta():
     t = _traza("k", eventos=[("crew:kickoff", 9000, "ok", 0), ("tool:x", 50, "ok", 0)])
     assert obs.AnalizadorTrazas.resumir([t])["etapa_mas_lenta"] == "tool:x"
 
+
+def test_crew_jerarquico_permite_delegar_a_los_tres_roles(monkeypatch):
+    import agentes
+
+    monkeypatch.setenv("GROQ_API_KEY", "x")
+    crew = agentes.crear_crew("cuanto stock hay")
+    tarea = crew.tasks[0]
+    assert tarea.agent is None
+    herramientas = crew._update_manager_tools(tarea, [])
+    descripcion = " ".join(h.description for h in herramientas).lower()
+    for rol in ("encargado de inventario", "vendedor", "encargado de compras"):
+        assert rol in descripcion
