@@ -27,9 +27,10 @@ from pathlib import Path
 
 import streamlit as st
 
-from agentes import crear_crew, forzar_envio_a_langsmith, modelo
+from agentes import modelo
 from db import DB as RUTA_DB
-from guardrails import detecto_injection, sanitizar_entrada
+from guardrails import neutralizar_salida, sanitizar_entrada
+from observabilidad import observar
 from stock import consultar_stock, historial_producto, productos_bajo_minimo
 
 RAIZ = Path(__file__).parent
@@ -111,59 +112,53 @@ with tab_chat:
             if pensamiento:
                 with st.expander("🧠 Ver el thinking (lo que hizo cada agente)"):
                     st.code(pensamiento, language=None)
-            st.markdown(texto)
+            st.markdown(neutralizar_salida(texto) if autor == "assistant" else texto)
 
     mensaje = st.chat_input("Ej: Vende 2 unidades del Taladro percutor")
     if mensaje:
-        if detecto_injection(mensaje):
-            st.session_state.registro.append(
-                {
-                    "hora": datetime.now().strftime("%H:%M:%S"),
-                    "mensaje": f"⚠️ intento de injection: {mensaje[:50]}",
-                    "segundos": 0,
-                    "tokens": 0,
-                }
-            )
         mensaje_limpio = sanitizar_entrada(mensaje)
-
-        st.session_state.mensajes.append(("user", mensaje, None))
+        st.session_state.mensajes.append(("user", mensaje_limpio, None))
         with st.chat_message("user"):
-            st.markdown(mensaje)
+            st.text(mensaje_limpio)
 
         with st.chat_message("assistant"):
             with st.spinner("El manager esta delegando la tarea... (puede tardar un minuto)"):
-                t0 = time.perf_counter()
                 buffer_log = io.StringIO()
-                try:
-                    with redirect_stdout(buffer_log):
-                        crew = crear_crew(mensaje_limpio, conversacion_id=st.session_state.conversacion_id)
-                        respuesta = str(crew.kickoff())
-                    forzar_envio_a_langsmith()
-                    m = getattr(crew, "usage_metrics", None)
-                    tokens = getattr(m, "total_tokens", 0) or 0
-                except Exception as e:
-                    tokens = 0
-                    respuesta = (
-                        "No se pudo completar el pedido. Causa tecnica: "
-                        f"`{type(e).__name__}: {e}`\n\n"
-                        "Si el mensaje dice *rate limit*, Groq se quedo sin cupo "
-                        "del tier gratuito (8000 tokens/minuto) — reintenta en "
-                        "un minuto, o cambia `GROQ_MODEL` en `.env` por otro "
-                        "modelo (tiene su propio cupo separado)."
+                with redirect_stdout(buffer_log):
+                    traza = observar(
+                        mensaje_limpio,
+                        caso="chat",
+                        conversacion_id=st.session_state.conversacion_id,
                     )
-                segundos = time.perf_counter() - t0
                 pensamiento = buffer_log.getvalue().strip() or None
+
+            if traza.estado == "bloqueado":
+                respuesta = (
+                    "⚠️ Mensaje bloqueado: parece un intento de cambiar las "
+                    "instrucciones del sistema. No se llamo al modelo."
+                )
+            elif traza.estado == "error":
+                respuesta = (
+                    f"No se pudo completar el pedido. Causa tecnica: `{traza.error}`\n\n"
+                    "Si dice *rate limit*, los tres modelos de Groq se quedaron sin "
+                    "cupo por minuto: reintenta en un minuto."
+                )
+            else:
+                respuesta = traza.respuesta_final or ""
+
             if pensamiento:
                 with st.expander("🧠 Ver el thinking (lo que hizo cada agente)"):
                     st.code(pensamiento, language=None)
-            st.markdown(respuesta)
+            st.markdown(neutralizar_salida(respuesta))
         st.session_state.mensajes.append(("assistant", respuesta, pensamiento))
         st.session_state.registro.append(
             {
                 "hora": datetime.now().strftime("%H:%M:%S"),
-                "mensaje": mensaje[:60],
-                "segundos": round(segundos, 1),
-                "tokens": tokens,
+                "mensaje": traza.mensaje_entrada[:60],
+                "estado": traza.estado,
+                "segundos": round(traza.duracion_ms / 1000, 1),
+                "tokens": traza.tokens_totales,
+                "trace_id": traza.trace_id,
             }
         )
         st.rerun()

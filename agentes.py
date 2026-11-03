@@ -13,6 +13,7 @@ justificar el framework (ver ADR en el README).
 """
 
 import os
+import time
 
 import litellm
 from crewai import LLM, Agent, Crew, Process, Task
@@ -88,22 +89,52 @@ class LLMConFallback(LLMGroq):
     """Si Groq devuelve rate limit, reintenta con el siguiente modelo de
     MODELOS_FALLBACK en vez de fallar. Cada modelo tiene su propio balde
     de 8000 tokens/minuto — rotar entre ellos evita la espera, no la cuota
-    total (siguen siendo recursos finitos, solo que separados)."""
+    total (siguen siendo recursos finitos, solo que separados).
+
+    Cada intento se reporta a OBSERVADORES_LLM con su modelo y sus tokens:
+    los eventos de CrewAI llegan sin `usage` en la mayoria de las llamadas."""
 
     def call(self, messages, **kwargs):
         import litellm as _litellm
 
+        rol = getattr(kwargs.get("from_agent"), "role", None)
         errores = []
         for modelo_intento in MODELOS_FALLBACK:
             self.model = f"groq/{modelo_intento}"
+            antes = dict(self._token_usage)
+            inicio = time.time()
             try:
-                return super().call(messages, **kwargs)
+                respuesta = super().call(messages, **kwargs)
             except _litellm.RateLimitError as e:
+                _avisar(rol, modelo_intento, inicio, "rate_limit", antes, self._token_usage, str(e))
                 errores.append(f"{modelo_intento}: rate limit")
                 continue
+            except Exception as e:
+                _avisar(rol, modelo_intento, inicio, "error", antes, self._token_usage,
+                        f"{type(e).__name__}: {e}")
+                raise
+            _avisar(rol, modelo_intento, inicio, "ok", antes, self._token_usage)
+            return respuesta
         raise RuntimeError(
             f"Los {len(MODELOS_FALLBACK)} modelos de fallback estan sin cupo: "
             + "; ".join(errores)
+        )
+
+
+OBSERVADORES_LLM: list = []
+
+
+def _avisar(rol, modelo_usado, inicio, estado, antes, despues, detalle=""):
+    for observador in OBSERVADORES_LLM:
+        observador(
+            rol=rol,
+            modelo=modelo_usado,
+            inicio=inicio,
+            fin=time.time(),
+            estado=estado,
+            tokens_entrada=despues["prompt_tokens"] - antes["prompt_tokens"],
+            tokens_salida=despues["completion_tokens"] - antes["completion_tokens"],
+            detalle=detalle,
         )
 
 
@@ -307,3 +338,4 @@ def generar_orden_compra(producto_nombre: str, cantidad: int, proveedor_email: s
 if __name__ == "__main__":
     crew = crear_crew("Vende 2 unidades del producto #4 y dime como queda el stock.")
     print(crew.kickoff())
+    forzar_envio_a_langsmith()

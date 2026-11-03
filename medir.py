@@ -13,7 +13,7 @@ Uso:
 
 import time
 
-from agentes import crear_crew
+from agentes import crear_crew, forzar_envio_a_langsmith
 
 
 def tokens_de(crew) -> int:
@@ -26,6 +26,7 @@ def correr(mensaje: str, etiqueta: str, conversacion_id: str) -> None:
     t0 = time.perf_counter()
     salida = crew.kickoff()
     seg = time.perf_counter() - t0
+    forzar_envio_a_langsmith()
     tok = tokens_de(crew)
     print(f"\n{'=' * 74}")
     print(f"  {etiqueta}  —  {seg:5.1f}s  {tok:>6} tokens")

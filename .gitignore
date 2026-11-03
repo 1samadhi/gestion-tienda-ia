@@ -7,3 +7,4 @@ credentials.json
 gmail_token.json
 tienda.db
 .env.save
+logs/
