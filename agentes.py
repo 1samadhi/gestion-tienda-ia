@@ -20,13 +20,21 @@ from crewai.tools import tool
 from dotenv import load_dotenv
 
 from gmail_tool import enviar_correo as _enviar_correo
+from guardrails import dato_seguro
 from stock import (
     consultar_stock,
     historial_producto,
     productos_bajo_minimo,
+    proveedores_registrados,
     registrar_reposicion,
     registrar_venta,
 )
+
+
+def _nombre(p) -> str:
+    """El nombre de un producto es un dato de la base, no una instruccion: si
+    trae una (inyeccion indirecta), al prompt llega solo su id."""
+    return dato_seguro(p.nombre, f"[producto #{p.id}: nombre con instrucciones, omitido]")
 
 load_dotenv()
 
@@ -115,7 +123,7 @@ def tool_consultar_stock(nombre_parcial: str = "") -> str:
     if not productos:
         return "No hay productos que coincidan."
     return "\n".join(
-        f"#{p.id} {p.nombre} — stock {p.stock_actual} (min {p.stock_minimo})"
+        f"#{p.id} {_nombre(p)} — stock {p.stock_actual} (min {p.stock_minimo})"
         for p in productos
     )
 
@@ -135,7 +143,7 @@ def tool_bajo_minimo(filtro: str = "") -> str:
     if not productos:
         return "Ningun producto esta bajo su minimo."
     return "\n".join(
-        f"#{p.id} {p.nombre} — stock {p.stock_actual} — proveedor {p.proveedor_email}"
+        f"#{p.id} {_nombre(p)} — stock {p.stock_actual} — proveedor {p.proveedor_email}"
         for p in productos
     )
 
@@ -161,11 +169,11 @@ def tool_registrar_venta(producto_id: int, cantidad: int) -> str:
     correo lo sigue redactando el agente de Compras.
     """
     p = registrar_venta(producto_id, cantidad)
-    mensaje = f"Venta registrada. {p.nombre} queda en {p.stock_actual} unidades."
+    mensaje = f"Venta registrada. {_nombre(p)} queda en {p.stock_actual} unidades."
 
     if p.stock_actual <= p.stock_minimo:
         cantidad_pedido = max(p.stock_minimo * 2 - p.stock_actual, p.stock_minimo)
-        resultado_compra = generar_orden_compra(p.nombre, cantidad_pedido, p.proveedor_email)
+        resultado_compra = generar_orden_compra(_nombre(p), cantidad_pedido, p.proveedor_email)
         mensaje += (
             f" Quedo en el minimo ({p.stock_minimo}) o bajo el, se genero la "
             f"reposicion automatica: {resultado_compra}"
@@ -177,13 +185,18 @@ def tool_registrar_venta(producto_id: int, cantidad: int) -> str:
 def tool_registrar_reposicion(producto_id: int, cantidad: int) -> str:
     """Suma stock cuando llega un pedido del proveedor."""
     p = registrar_reposicion(producto_id, cantidad)
-    return f"Reposicion registrada. {p.nombre} queda en {p.stock_actual} unidades."
+    return f"Reposicion registrada. {_nombre(p)} queda en {p.stock_actual} unidades."
 
 
 @tool("enviar correo a proveedor")
 def tool_enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> str:
-    """Envia un correo real al proveedor (orden de reposicion)."""
-    id_msg = _enviar_correo(destinatario, asunto, cuerpo)
+    """Envia un correo real al proveedor (orden de reposicion). Solo a
+    direcciones de proveedores registrados en la base."""
+    # El destinatario lo escribe el LLM: una inyeccion que llegue hasta Compras
+    # podria apuntar el correo a cualquier parte. Se decide contra la base.
+    if destinatario.strip().lower() not in proveedores_registrados():
+        return f"Rechazado: {destinatario!r} no es un proveedor registrado. No se envio nada."
+    id_msg = _enviar_correo(destinatario.strip(), asunto, cuerpo)
     return f"Correo enviado, id={id_msg}"
 
 

@@ -5,6 +5,7 @@ Separacion de responsabilidades:
     registrar_venta, registrar_reposicion   -> escritura, solo el agente que corresponda
 """
 
+import re
 from dataclasses import dataclass
 
 from db import conectar
@@ -37,14 +38,32 @@ def _fila_a_producto(fila) -> Producto:
     )
 
 
+def _cantidad_valida(cantidad: int) -> None:
+    # La tool la llena el LLM: el tipo lo valida pydantic, el signo no.
+    # Sin esto, vender -5 sumaba 5 unidades y dejaba una "venta" negativa.
+    if not isinstance(cantidad, int) or isinstance(cantidad, bool) or cantidad <= 0:
+        raise ValueError(f"La cantidad debe ser un entero positivo, llego {cantidad!r}")
+
+
 def consultar_stock(nombre_parcial: str = "") -> list[Producto]:
-    """Busca productos por coincidencia parcial del nombre. Vacio = todos."""
+    """Busca productos por coincidencia parcial del nombre. Vacio = todos.
+
+    `%` y `_` del texto se buscan literales: son comodines de LIKE, no del usuario."""
+    patron = re.sub(r"([\\%_])", r"\\\1", nombre_parcial)
     with conectar() as con:
         filas = con.execute(
-            "SELECT * FROM productos WHERE nombre LIKE ? ORDER BY nombre",
-            (f"%{nombre_parcial}%",),
+            "SELECT * FROM productos WHERE nombre LIKE ? ESCAPE '\\' ORDER BY nombre",
+            (f"%{patron}%",),
         ).fetchall()
     return [_fila_a_producto(f) for f in filas]
+
+
+def proveedores_registrados() -> set[str]:
+    with conectar() as con:
+        filas = con.execute(
+            "SELECT DISTINCT lower(proveedor_email) AS e FROM productos WHERE proveedor_email IS NOT NULL"
+        ).fetchall()
+    return {f["e"] for f in filas}
 
 
 def productos_bajo_minimo() -> list[Producto]:
@@ -57,6 +76,7 @@ def productos_bajo_minimo() -> list[Producto]:
 
 def registrar_venta(producto_id: int, cantidad: int) -> Producto:
     """Descuenta stock. Falla si no alcanza (no permite stock negativo)."""
+    _cantidad_valida(cantidad)
     with conectar() as con:
         fila = con.execute("SELECT * FROM productos WHERE id = ?", (producto_id,)).fetchone()
         if fila is None:
@@ -80,6 +100,7 @@ def registrar_venta(producto_id: int, cantidad: int) -> Producto:
 
 def registrar_reposicion(producto_id: int, cantidad: int) -> Producto:
     """Suma stock, por ejemplo cuando llega un pedido del proveedor."""
+    _cantidad_valida(cantidad)
     with conectar() as con:
         fila = con.execute("SELECT * FROM productos WHERE id = ?", (producto_id,)).fetchone()
         if fila is None:
