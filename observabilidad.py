@@ -27,12 +27,15 @@ from crewai.events import crewai_event_bus
 from crewai.events.types.memory_events import (
     MemoryQueryCompletedEvent,
     MemoryQueryFailedEvent,
+    MemoryQueryStartedEvent,
     MemorySaveCompletedEvent,
     MemorySaveFailedEvent,
+    MemorySaveStartedEvent,
 )
 from crewai.events.types.tool_usage_events import (
     ToolUsageErrorEvent,
     ToolUsageFinishedEvent,
+    ToolUsageStartedEvent,
 )
 
 from guardrails import detecto_injection, sanitizar_pii
@@ -224,6 +227,29 @@ _lock = threading.Lock()
 _ORG = re.compile(r"org_[0-9a-z]{10,}")
 
 
+_progreso: Callable[[str], None] | None = None
+
+_FRASES_TOOL = {
+    "consultar_stock": "Inventario revisando el stock",
+    "productos_bajo_minimo": "Revisando productos bajo el mínimo",
+    "historial": "Revisando el historial del producto",
+    "registrar_venta": "Vendedor registrando la venta",
+    "registrar_reposicion": "Compras preparando la reposición",
+    "correo": "Compras redactando la orden al proveedor",
+    "search_memory": "Buscando en la memoria",
+}
+
+
+def _avisar_progreso(texto: str) -> None:
+    """Una frase corta de lo que esta pasando, para la linea de estado del chat."""
+    funcion = _progreso
+    if funcion is not None and _activa is not None:
+        try:
+            funcion(texto)
+        except Exception:
+            pass
+
+
 def _limpio(texto: str, largo: int = 300) -> str:
     """PII fuera y sin el id de organizacion que Groq incluye en cada 429."""
     return _ORG.sub("org_REDACTADA", sanitizar_pii(texto))[:largo]
@@ -234,6 +260,8 @@ def _ms_desde_inicio(momento: datetime) -> float:
 
 
 def _llamada_llm(rol, modelo, inicio, fin, estado, tokens_entrada, tokens_salida, detalle):
+    if estado == "rate_limit":
+        _avisar_progreso("Groq está ocupado, probando con otro modelo")
     with _lock:
         if _activa is None:
             return
@@ -259,6 +287,33 @@ def _fase(traza: Traza, etapa: str, inicio: float, estado: str = "ok", detalle: 
             estado=estado,
             detalle=detalle,
         )
+
+
+def _llm_empieza(rol: str | None) -> None:
+    # Sin rol son las llamadas internas de la memoria de CrewAI.
+    _avisar_progreso(f"{rol} pensando" if rol else "Organizando la memoria")
+
+
+@crewai_event_bus.on(ToolUsageStartedEvent)
+def _tool_inicio(_, evento):
+    nombre = evento.tool_name.lower().replace(" ", "_")
+    if "coworker" in nombre:
+        args = evento.tool_args if isinstance(evento.tool_args, dict) else {}
+        destino = args.get("coworker") or "un compañero"
+        _avisar_progreso(f"Gerente le pasa la tarea a {destino}")
+        return
+    frase = next((f for clave, f in _FRASES_TOOL.items() if clave in nombre), None)
+    _avisar_progreso(frase or f"Usando {evento.tool_name}")
+
+
+@crewai_event_bus.on(MemoryQueryStartedEvent)
+def _mem_consulta_inicio(_, e):
+    _avisar_progreso("Buscando en la memoria")
+
+
+@crewai_event_bus.on(MemorySaveStartedEvent)
+def _mem_guardado_inicio(_, e):
+    _avisar_progreso("Guardando en la memoria")
 
 
 @crewai_event_bus.on(ToolUsageFinishedEvent)
@@ -330,18 +385,21 @@ Verificador = Callable[[str], tuple[bool, str]]
 
 
 def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = None,
-             verificar: Verificador | None = None, guardar: bool = True) -> Traza:
+             verificar: Verificador | None = None, guardar: bool = True,
+             al_progreso: Callable[[str], None] | None = None) -> Traza:
     """Corre el crew sobre `mensaje` y devuelve su traza.
 
     Una inyeccion detectada corta antes del crew: la traza queda `bloqueado`
     con `validacion_entrada` en error y cero llamadas al LLM. `verificar`
     recibe la respuesta y compara contra la base (precision, IE1).
     """
-    global _activa, _t0
+    global _activa, _t0, _progreso
     import agentes
 
     if _llamada_llm not in agentes.OBSERVADORES_LLM:
         agentes.OBSERVADORES_LLM.append(_llamada_llm)
+    if _llm_empieza not in agentes.AL_EMPEZAR_LLM:
+        agentes.AL_EMPEZAR_LLM.append(_llm_empieza)
 
     traza = Traza(
         trace_id=uuid.uuid4().hex[:12],
@@ -366,7 +424,8 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
         _fase(traza, "crew:preparacion", inicio)
 
         with _lock:
-            _activa = traza
+            _activa, _progreso = traza, al_progreso
+        _avisar_progreso("Gerente leyendo el pedido")
         inicio = time.time()
         try:
             traza.respuesta_final = str(crew.kickoff())
@@ -379,7 +438,7 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
             inicio = time.time()
             crewai_event_bus.flush(timeout=30)
             with _lock:
-                _activa = None
+                _activa, _progreso = None, None
             agentes.forzar_envio_a_langsmith()
             _fase(traza, "crew:cierre", inicio, detalle="flush de eventos y de LangSmith")
 

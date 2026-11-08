@@ -23,10 +23,12 @@ flowchart LR
 |---|---|
 | Inventario | leer stock, bajo mínimo, historial |
 | Ventas | registrar ventas |
-| Compras | reponer y enviar correo (único con Gmail) |
+| Compras | proponer reposiciones y correos a proveedores |
 | Manager | solo delegar |
 
-La reposición la dispara Python (`stock ≤ mínimo`), no el LLM.
+La orden al proveedor la dispara Python (`stock ≤ mínimo`), no el LLM.
+Reponer stock y enviar correos **quedan pendientes** hasta que el dueño los
+aprueba en la pestaña Stock (`pendientes.py`).
 
 ## Una petición, paso a paso
 
@@ -92,6 +94,9 @@ LangSmith (opcional): `LANGSMITH_TRACING=true` y `LANGSMITH_API_KEY` en `.env`.
 | Inyección indirecta | un nombre de producto con instrucciones no llega al prompt |
 | Argumentos del LLM | cantidades positivas, SQL parametrizado, `LIKE` escapado |
 | Correo a terceros | solo a proveedores registrados en la base |
+| Acciones irreversibles | reposición y correo esperan aprobación humana |
+| Producto equivocado o repetido | la tool resuelve el nombre sin adivinar y no repite una operación en el mismo mensaje |
+| Consumo sin tope | máximo de tokens y de rechazos por límite en cada mensaje |
 | Salida en pantalla | HTML escapado, sin imágenes ni enlaces markdown |
 | Datos personales en logs | correos, RUT y teléfonos redactados |
 
@@ -116,6 +121,7 @@ la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
 |---|---|
 | `agentes.py` | roles, tools, manager, fallback de modelos |
 | `stock.py`, `db.py` | dominio en Python puro, sin LLM |
+| `pendientes.py` | acciones que esperan aprobación del dueño |
 | `guardrails.py` | filtro de entrada, PII, salida segura |
 | `observabilidad.py` | trazas, métricas, analizador |
 | `bateria.py` | casos de medición con verificación |

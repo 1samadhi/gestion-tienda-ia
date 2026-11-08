@@ -6,6 +6,7 @@ Separacion de responsabilidades:
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from db import conectar
@@ -56,6 +57,31 @@ def consultar_stock(nombre_parcial: str = "") -> list[Producto]:
             (f"%{patron}%",),
         ).fetchall()
     return [_fila_a_producto(f) for f in filas]
+
+
+def _plano(texto: str) -> str:
+    t = unicodedata.normalize("NFD", texto.strip().lower())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+
+
+def resolver_producto(referencia: str) -> Producto:
+    """Convierte lo que escribe el LLM ("#2", "2", "taladro") en UN producto.
+
+    Si no hay coincidencia o hay mas de una, falla con la lista de opciones:
+    nunca adivina. Adivinar un id fue lo que repuso el Cuaderno cuando se
+    pidio el Taladro."""
+    ref = referencia.strip().lstrip("#").strip()
+    productos = consultar_stock("")
+    if ref.isdigit():
+        encontrados = [p for p in productos if p.id == int(ref)]
+    else:
+        exactos = [p for p in productos if _plano(p.nombre) == _plano(ref)]
+        encontrados = exactos or [p for p in productos if _plano(ref) in _plano(p.nombre)]
+    if len(encontrados) == 1:
+        return encontrados[0]
+    opciones = ", ".join(f"#{p.id} {p.nombre}" for p in (encontrados or productos))
+    motivo = "es ambiguo" if encontrados else "no existe"
+    raise ValueError(f"El producto {referencia!r} {motivo}. Opciones: {opciones}")
 
 
 def proveedores_registrados() -> set[str]:

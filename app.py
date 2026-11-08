@@ -2,8 +2,9 @@
 
 Cuatro pestanas, cada una con costo deliberadamente distinto:
 
-    Stock              directo a stock.py — sin LLM, instantaneo, gratis
-    Chat               crear_crew() completo — costo real, ver MEDICION.md
+    Stock              directo a stock.py — sin LLM, instantaneo, gratis.
+                       Aqui se aprueban las operaciones pendientes.
+    Chat               crear_crew() completo, con una linea de estado en vivo
     Logs y costos      lo que ya gasto ESTA sesion (tokens, segundos) —
                        no llama a nada, solo muestra lo acumulado
     Estado del sistema chequeos de archivos locales (token Gmail, DB,
@@ -18,17 +19,19 @@ Uso:
     uv run streamlit run app.py
 """
 
-import io
+import queue
+import threading
 import time
 import uuid
-from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
 
+import pendientes
 from agentes import modelo
 from db import DB as RUTA_DB
+from gmail_tool import enviar_correo
 from guardrails import neutralizar_salida, sanitizar_entrada
 from observabilidad import observar
 from stock import consultar_stock, historial_producto, productos_bajo_minimo
@@ -54,6 +57,31 @@ tab_stock, tab_chat, tab_logs, tab_estado = st.tabs(
 # --- Pestana 1: stock directo a la base, sin LLM -----------------------
 
 with tab_stock:
+    por_aprobar = pendientes.listar()
+    if por_aprobar:
+        st.subheader(f"Pendientes de aprobación ({len(por_aprobar)})")
+        st.caption("Lo propuso un agente. No se ejecuta hasta que lo apruebes.")
+        for op in por_aprobar:
+            if op["tipo"] == "reposicion":
+                texto = f"Reponer **{op['cantidad']}** unidades de **{op['producto']}**"
+            else:
+                texto = f"Enviar correo a **{op['destinatario']}** — {op['asunto']}"
+            col_t, col_a, col_d = st.columns([6, 1, 1])
+            col_t.markdown(f"#{op['id']} · {texto}")
+            if op["tipo"] == "correo":
+                with col_t.expander("Ver correo"):
+                    st.text(op["cuerpo"])
+            if col_a.button("Aprobar", key=f"ok{op['id']}"):
+                try:
+                    st.toast(pendientes.aprobar(op["id"], enviar_correo))
+                except Exception as e:
+                    st.toast(f"No se pudo: {e}")
+                st.rerun()
+            if col_d.button("Descartar", key=f"no{op['id']}"):
+                pendientes.descartar(op["id"])
+                st.rerun()
+        st.divider()
+
     col_stock, col_alerta = st.columns(2)
 
     with col_stock:
@@ -101,18 +129,15 @@ with tab_stock:
 
 with tab_chat:
     st.caption(
-        "Cada mensaje corre el manager jerarquico completo: ~60-80s y "
-        "15 000-20 000 tokens (ver pestaña de Logs y MEDICION.md). Para "
-        "solo mirar el stock, usa la pestaña de Stock — es gratis e "
-        "instantaneo."
+        "Cada mensaje pasa por el gerente y los agentes (Groq). Para solo mirar "
+        "el stock usa la pestaña Stock: es gratis e instantáneo."
     )
 
-    for autor, texto, pensamiento in st.session_state.mensajes:
+    for autor, texto, resumen in st.session_state.mensajes:
         with st.chat_message(autor):
-            if pensamiento:
-                with st.expander("🧠 Ver el thinking (lo que hizo cada agente)"):
-                    st.code(pensamiento, language=None)
             st.markdown(neutralizar_salida(texto) if autor == "assistant" else texto)
+            if resumen:
+                st.caption(resumen)
 
     mensaje = st.chat_input("Ej: Vende 2 unidades del Taladro percutor")
     if mensaje:
@@ -122,35 +147,59 @@ with tab_chat:
             st.text(mensaje_limpio)
 
         with st.chat_message("assistant"):
-            with st.spinner("El manager esta delegando la tarea... (puede tardar un minuto)"):
-                buffer_log = io.StringIO()
-                with redirect_stdout(buffer_log):
-                    traza = observar(
-                        mensaje_limpio,
-                        caso="chat",
-                        conversacion_id=st.session_state.conversacion_id,
-                    )
-                pensamiento = buffer_log.getvalue().strip() or None
+            linea = st.empty()
+            avisos: queue.Queue[str] = queue.Queue()
+            resultado = {}
+            conversacion = st.session_state.conversacion_id
+
+            def trabajar():
+                resultado["traza"] = observar(
+                    mensaje_limpio,
+                    caso="chat",
+                    conversacion_id=conversacion,
+                    al_progreso=avisos.put,
+                )
+
+            # El crew corre en otro hilo; este hilo solo pinta la linea de
+            # estado (Streamlit no deja escribir en la pagina desde otro hilo).
+            hilo = threading.Thread(target=trabajar, daemon=True)
+            inicio = time.time()
+            ultimo = "Leyendo el pedido"
+            hilo.start()
+            while hilo.is_alive():
+                while not avisos.empty():
+                    ultimo = avisos.get()
+                linea.markdown(f"⏳ {ultimo}… · {time.time() - inicio:.0f} s")
+                time.sleep(0.3)
+            hilo.join()
+            linea.empty()
+            traza = resultado["traza"]
 
             if traza.estado == "bloqueado":
                 respuesta = (
                     "⚠️ Mensaje bloqueado: parece un intento de cambiar las "
-                    "instrucciones del sistema. No se llamo al modelo."
+                    "instrucciones del sistema. No se llamó al modelo."
+                )
+            elif traza.estado == "error" and "tope" in (traza.error or ""):
+                respuesta = (
+                    "El pedido superó el tope de consumo por mensaje y se cortó. "
+                    "Prueba con un pedido más acotado."
                 )
             elif traza.estado == "error":
                 respuesta = (
-                    f"No se pudo completar el pedido. Causa tecnica: `{traza.error}`\n\n"
-                    "Si dice *rate limit*, los tres modelos de Groq se quedaron sin "
-                    "cupo por minuto: reintenta en un minuto."
+                    f"No se pudo completar el pedido: `{traza.error}`\n\n"
+                    "Si dice *rate limit*, Groq está sin cupo por minuto: reintenta en un minuto."
                 )
             else:
                 respuesta = traza.respuesta_final or ""
 
-            if pensamiento:
-                with st.expander("🧠 Ver el thinking (lo que hizo cada agente)"):
-                    st.code(pensamiento, language=None)
+            resumen = (
+                f"{traza.duracion_ms / 1000:.0f} s · {traza.tokens_totales:,} tokens · "
+                f"{traza.llamadas_llm} llamadas · traza {traza.trace_id}"
+            )
             st.markdown(neutralizar_salida(respuesta))
-        st.session_state.mensajes.append(("assistant", respuesta, pensamiento))
+            st.caption(resumen)
+        st.session_state.mensajes.append(("assistant", respuesta, resumen))
         st.session_state.registro.append(
             {
                 "hora": datetime.now().strftime("%H:%M:%S"),
@@ -187,13 +236,7 @@ with tab_logs:
             hide_index=True,
         )
 
-    st.divider()
-    st.caption(
-        "Medicion de referencia (3 casos representativos, corridos fuera "
-        "de esta sesion, ver MEDICION.md): consulta simple 57.3s/16 651 "
-        "tok · venta simple 81.6s/20 316 tok · venta con reposicion "
-        "78.3s/15 389 tok."
-    )
+    st.caption("Detalle de cada traza: `uv run python observabilidad.py <trace_id>`")
 
 # --- Pestana 4: estado del sistema, sin gastar tokens -------------------
 

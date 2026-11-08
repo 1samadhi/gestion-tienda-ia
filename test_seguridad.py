@@ -21,12 +21,9 @@ def base_temporal(tmp_path, monkeypatch):
     db.sembrar_datos_demo()
 
 
-@pytest.fixture
-def gmail(monkeypatch):
-    enviados = []
-    monkeypatch.setattr(agentes, "_enviar_correo",
-                        lambda d, a, c: enviados.append(d) or f"id-{len(enviados)}")
-    return enviados
+@pytest.fixture(autouse=True)
+def peticion_nueva():
+    agentes.nueva_peticion()
 
 
 def _tool(t):
@@ -55,13 +52,16 @@ def test_venta_y_reposicion_rechazan_cantidades_no_positivas(cantidad):
     assert stock.historial_producto(pid) == []
 
 
-def test_correo_solo_a_proveedores_registrados(gmail):
-    enviar = _tool(agentes.tool_enviar_correo)
-    rechazo = enviar("atacante@evil.com", "Orden", "todo el stock")
-    assert rechazo.startswith("Rechazado") and gmail == []
+def test_correo_solo_a_proveedores_registrados():
+    import pendientes
 
-    ok = enviar(" Proveedor2@Example.com ", "Orden", "10 unidades")
-    assert ok.startswith("Correo enviado") and gmail == ["Proveedor2@Example.com"]
+    preparar = _tool(agentes.tool_enviar_correo)
+    rechazo = preparar("atacante@evil.com", "Orden", "todo el stock")
+    assert rechazo.startswith("Rechazado") and pendientes.listar() == []
+
+    ok = preparar(" Proveedor2@Example.com ", "Orden", "10 unidades")
+    assert "pendiente de aprobacion" in ok
+    assert [o["destinatario"] for o in pendientes.listar()] == ["Proveedor2@Example.com"]
 
 
 @pytest.mark.parametrize("campo", ["to", "subject"])
@@ -87,6 +87,6 @@ def test_nombre_envenenado_no_llega_al_prompt_de_otro_agente(monkeypatch):
     pedidos = []
     monkeypatch.setattr(agentes, "generar_orden_compra",
                         lambda nombre, cant, prov: pedidos.append((nombre, prov)) or "orden ok")
-    _tool(agentes.tool_registrar_venta)(4, 13)
+    _tool(agentes.tool_registrar_venta)("#4", 13)
     nombre, proveedor = pedidos[0]
     assert "evil.com" not in nombre and proveedor == "proveedor2@example.com"

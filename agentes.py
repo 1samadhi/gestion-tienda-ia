@@ -3,8 +3,11 @@
 Reparto de herramientas (nadie tiene mas de lo que necesita):
     Inventario  -> solo lectura de stock
     Ventas      -> registrar_venta
-    Compras     -> registrar_reposicion + enviar_correo (unico con Gmail)
+    Compras     -> registrar_reposicion + preparar correo (unico que llega a Gmail)
     Manager     -> sin tools, solo delega
+
+Reponer y escribir a un proveedor quedan pendientes hasta que el dueño los
+aprueba (pendientes.py); el envio real lo hace la app, no un agente.
 
 CrewAI en vez de LangGraph: los tres roles tienen prompts de sistema
 incompatibles entre si (vender no es lo mismo que negociar con un
@@ -13,6 +16,8 @@ justificar el framework (ver ADR en el README).
 """
 
 import os
+import re
+import threading
 import time
 
 import litellm
@@ -20,15 +25,15 @@ from crewai import LLM, Agent, Crew, Process, Task
 from crewai.tools import tool
 from dotenv import load_dotenv
 
-from gmail_tool import enviar_correo as _enviar_correo
+import pendientes
 from guardrails import dato_seguro
 from stock import (
     consultar_stock,
     historial_producto,
     productos_bajo_minimo,
     proveedores_registrados,
-    registrar_reposicion,
     registrar_venta,
+    resolver_producto,
 )
 
 
@@ -85,11 +90,38 @@ MODELOS_FALLBACK = [
 ]
 
 
+# Topes por mensaje (LLM06:2026, Unbounded Consumption). Sin ellos, un solo
+# pedido largo agoto el cupo por minuto de los tres modelos: 47 rechazos y
+# 45 000 tokens antes de caerse.
+PRESUPUESTO_TOKENS = int(os.getenv("PRESUPUESTO_TOKENS_MENSAJE", "40000"))
+MAX_LIMITES = int(os.getenv("MAX_RATE_LIMITS_MENSAJE", "12"))
+
+
+class PresupuestoAgotado(RuntimeError):
+    pass
+
+
+_peticion = {"tokens": 0, "limites": 0}
+_hechas: set[tuple] = set()
+_lock = threading.Lock()
+
+
+def nueva_peticion() -> None:
+    """Reinicia los topes y el registro de operaciones de un mensaje."""
+    with _lock:
+        _peticion.update(tokens=0, limites=0)
+        _hechas.clear()
+
+
+def _espera_sugerida(error: Exception) -> float:
+    m = re.search(r"try again in ([\d.]+)s", str(error))
+    return min(float(m.group(1)), 10.0) if m else 2.0
+
+
 class LLMConFallback(LLMGroq):
     """Si Groq devuelve rate limit, reintenta con el siguiente modelo de
-    MODELOS_FALLBACK en vez de fallar. Cada modelo tiene su propio balde
-    de 8000 tokens/minuto — rotar entre ellos evita la espera, no la cuota
-    total (siguen siendo recursos finitos, solo que separados).
+    MODELOS_FALLBACK. Si los tres estan sin cupo espera lo que Groq sugiere
+    (maximo 10 s) una sola vez, en vez de que CrewAI reintente en rafaga.
 
     Cada intento se reporta a OBSERVADORES_LLM con su modelo y sus tokens:
     los eventos de CrewAI llegan sin `usage` en la mayoria de las llamadas."""
@@ -99,22 +131,44 @@ class LLMConFallback(LLMGroq):
 
         rol = getattr(kwargs.get("from_agent"), "role", None)
         errores = []
-        for modelo_intento in MODELOS_FALLBACK:
-            self.model = f"groq/{modelo_intento}"
-            antes = dict(self._token_usage)
-            inicio = time.time()
-            try:
-                respuesta = super().call(messages, **kwargs)
-            except _litellm.RateLimitError as e:
-                _avisar(rol, modelo_intento, inicio, "rate_limit", antes, self._token_usage, str(e))
-                errores.append(f"{modelo_intento}: rate limit")
-                continue
-            except Exception as e:
-                _avisar(rol, modelo_intento, inicio, "error", antes, self._token_usage,
-                        f"{type(e).__name__}: {e}")
-                raise
-            _avisar(rol, modelo_intento, inicio, "ok", antes, self._token_usage)
-            return respuesta
+        for ronda in range(2):
+            espera = 2.0
+            for modelo_intento in MODELOS_FALLBACK:
+                with _lock:
+                    if _peticion["tokens"] >= PRESUPUESTO_TOKENS:
+                        raise PresupuestoAgotado(
+                            f"Se alcanzo el tope de {PRESUPUESTO_TOKENS} tokens para este mensaje"
+                        )
+                    if _peticion["limites"] >= MAX_LIMITES:
+                        raise PresupuestoAgotado(
+                            f"Groq rechazo {MAX_LIMITES} llamadas por limite en este mensaje"
+                        )
+                self.model = f"groq/{modelo_intento}"
+                for avisar in AL_EMPEZAR_LLM:
+                    avisar(rol)
+                antes = dict(self._token_usage)
+                inicio = time.time()
+                try:
+                    respuesta = super().call(messages, **kwargs)
+                except _litellm.RateLimitError as e:
+                    with _lock:
+                        _peticion["limites"] += 1
+                    _avisar(rol, modelo_intento, inicio, "rate_limit", antes, self._token_usage, str(e))
+                    errores.append(f"{modelo_intento}: rate limit")
+                    espera = _espera_sugerida(e)
+                    continue
+                except Exception as e:
+                    _avisar(rol, modelo_intento, inicio, "error", antes, self._token_usage,
+                            f"{type(e).__name__}: {e}")
+                    raise
+                usados = (self._token_usage["prompt_tokens"] - antes["prompt_tokens"]
+                          + self._token_usage["completion_tokens"] - antes["completion_tokens"])
+                with _lock:
+                    _peticion["tokens"] += usados
+                _avisar(rol, modelo_intento, inicio, "ok", antes, self._token_usage)
+                return respuesta
+            if ronda == 0:
+                time.sleep(espera)
         raise RuntimeError(
             f"Los {len(MODELOS_FALLBACK)} modelos de fallback estan sin cupo: "
             + "; ".join(errores)
@@ -122,6 +176,7 @@ class LLMConFallback(LLMGroq):
 
 
 OBSERVADORES_LLM: list = []
+AL_EMPEZAR_LLM: list = []
 
 
 def _avisar(rol, modelo_usado, inicio, estado, antes, despues, detalle=""):
@@ -179,56 +234,78 @@ def tool_bajo_minimo(filtro: str = "") -> str:
     )
 
 
+def _una_vez(*clave) -> bool:
+    """False si esta misma operacion ya se hizo en este mensaje. Un agente
+    que reintenta no debe registrar dos veces la misma venta o reposicion."""
+    with _lock:
+        if clave in _hechas:
+            return False
+        _hechas.add(clave)
+        return True
+
+
 @tool("historial de movimientos del producto")
-def tool_historial_producto(producto_id: int) -> str:
-    """Memoria de largo plazo: ventas e ingresos pasados de un producto,
-    para decidir si conviene reponer ahora o esperar."""
-    movs = historial_producto(producto_id)
+def tool_historial_producto(producto: str) -> str:
+    """Ventas e ingresos pasados de un producto (nombre o #id), para decidir
+    si conviene reponer ahora o esperar."""
+    p = resolver_producto(producto)
+    movs = historial_producto(p.id)
     if not movs:
-        return "Sin movimientos registrados para este producto."
+        return f"Sin movimientos registrados para {_nombre(p)}."
     return "\n".join(f"{m['fecha']} — {m['tipo']} de {m['cantidad']}" for m in movs)
 
 
 @tool("registrar venta")
-def tool_registrar_venta(producto_id: int, cantidad: int) -> str:
-    """Descuenta stock por una venta. Falla si no alcanza el stock.
+def tool_registrar_venta(producto: str, cantidad: int) -> str:
+    """Descuenta stock por una venta. `producto` es el nombre o el #id.
+    Falla si no alcanza el stock.
 
-    Planificacion adaptativa: si la venta deja el producto en su minimo
-    o por debajo, dispara la reposicion sola (no espera a que alguien
-    pregunte). El disparo es deterministico — se decide con un numero,
-    no con que el LLM se acuerde de avisar — pero el contenido del
-    correo lo sigue redactando el agente de Compras.
+    Planificacion adaptativa: si la venta deja el producto en su minimo o
+    por debajo, se prepara sola la orden al proveedor (la decide un numero,
+    no el LLM) y queda pendiente de aprobacion del dueño.
     """
-    p = registrar_venta(producto_id, cantidad)
+    p = resolver_producto(producto)
+    if not _una_vez("venta", p.id, cantidad):
+        return f"Esa venta de {_nombre(p)} ya se registro en este pedido. No se repite."
+    p = registrar_venta(p.id, cantidad)
     mensaje = f"Venta registrada. {_nombre(p)} queda en {p.stock_actual} unidades."
 
     if p.stock_actual <= p.stock_minimo:
         cantidad_pedido = max(p.stock_minimo * 2 - p.stock_actual, p.stock_minimo)
         resultado_compra = generar_orden_compra(_nombre(p), cantidad_pedido, p.proveedor_email)
         mensaje += (
-            f" Quedo en el minimo ({p.stock_minimo}) o bajo el, se genero la "
-            f"reposicion automatica: {resultado_compra}"
+            f" Quedo en el minimo ({p.stock_minimo}) o bajo el, se preparo la "
+            f"orden de reposicion: {resultado_compra}"
         )
     return mensaje
 
 
 @tool("registrar reposicion")
-def tool_registrar_reposicion(producto_id: int, cantidad: int) -> str:
-    """Suma stock cuando llega un pedido del proveedor."""
-    p = registrar_reposicion(producto_id, cantidad)
-    return f"Reposicion registrada. {_nombre(p)} queda en {p.stock_actual} unidades."
+def tool_registrar_reposicion(producto: str, cantidad: int) -> str:
+    """Registra la llegada de un pedido del proveedor. `producto` es el nombre
+    o el #id. No suma stock: queda pendiente hasta que el dueño la apruebe."""
+    p = resolver_producto(producto)
+    if not _una_vez("reposicion", p.id, cantidad):
+        return f"Esa reposicion de {_nombre(p)} ya quedo pendiente en este pedido. No se repite."
+    op = pendientes.proponer_reposicion(p.id, cantidad)
+    return (
+        f"Reposicion de {cantidad} unidades de {_nombre(p)} pendiente de aprobacion "
+        f"del dueño (operacion #{op}). El stock no cambio todavia."
+    )
 
 
-@tool("enviar correo a proveedor")
+@tool("preparar correo a proveedor")
 def tool_enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> str:
-    """Envia un correo real al proveedor (orden de reposicion). Solo a
-    direcciones de proveedores registrados en la base."""
+    """Prepara un correo a un proveedor registrado. No se envia hasta que el
+    dueño lo apruebe en la app."""
     # El destinatario lo escribe el LLM: una inyeccion que llegue hasta Compras
     # podria apuntar el correo a cualquier parte. Se decide contra la base.
     if destinatario.strip().lower() not in proveedores_registrados():
-        return f"Rechazado: {destinatario!r} no es un proveedor registrado. No se envio nada."
-    id_msg = _enviar_correo(destinatario.strip(), asunto, cuerpo)
-    return f"Correo enviado, id={id_msg}"
+        return f"Rechazado: {destinatario!r} no es un proveedor registrado. No se preparo nada."
+    if not _una_vez("correo", destinatario.strip().lower()):
+        return "Ya hay un correo preparado para ese proveedor en este pedido. No se repite."
+    op = pendientes.proponer_correo(destinatario.strip(), asunto, cuerpo)
+    return f"Correo preparado para {destinatario.strip()}, pendiente de aprobacion del dueño (operacion #{op})."
 
 
 # --- Agentes ------------------------------------------------------------
@@ -242,6 +319,7 @@ def crear_agentes() -> dict[str, Agent]:
         backstory="Solo consultas. Nunca decides ventas ni compras.",
         tools=[tool_consultar_stock, tool_bajo_minimo, tool_historial_producto],
         llm=llm,
+        max_iter=6,
         verbose=False,
     )
     ventas = Agent(
@@ -250,27 +328,30 @@ def crear_agentes() -> dict[str, Agent]:
         backstory="Atiendes al cliente. No contactas proveedores.",
         tools=[tool_registrar_venta, tool_bajo_minimo],
         llm=llm,
+        max_iter=6,
         verbose=False,
     )
     compras = Agent(
         role="Encargado de compras",
-        goal="Reponer stock y comunicarse con proveedores por correo",
-        backstory="Redactas ordenes de reposicion claras y las envias.",
+        goal="Registrar reposiciones y preparar correos a proveedores",
+        backstory=(
+            "Redactas ordenes de reposicion claras. Lo que preparas queda "
+            "pendiente: el dueño lo aprueba antes de que se ejecute."
+        ),
         tools=[tool_registrar_reposicion, tool_enviar_correo],
         llm=llm,
+        max_iter=6,
         verbose=False,
     )
     return {"inventario": inventario, "ventas": ventas, "compras": compras}
 
 
 def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
-    """Crew general: el manager delega entre Inventario y Ventas.
+    """Crew general: el manager delega entre Inventario, Ventas y Compras.
 
-    No se usa para enviar correos — ver `generar_orden_compra` para esa ruta.
-    El manager razona bien sobre a quien correspondería un correo, pero no
-    siempre invoca la delegacion real; una accion con efecto en el mundo
-    real (mandar un correo de verdad) no puede depender de que el LLM
-    decida ejecutarla.
+    La orden automatica al proveedor no pasa por aqui: ver
+    `generar_orden_compra`. Lo que cambia stock fuera de una venta, o le
+    escribe a un proveedor, queda pendiente de aprobacion (`pendientes.py`).
 
     Memoria corto plazo (IE3): nativa de CrewAI (`memory=True`), con
     `root_scope` por `conversacion_id` — mismo rol que el `thread_id` de
@@ -278,6 +359,7 @@ def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
     Embedder local (`sentence-transformer`): Groq no ofrece endpoint de
     embeddings, mismo motivo por el que el curso usa HuggingFace en el RAG.
     """
+    nueva_peticion()
     agentes = crear_agentes()
     llm = modelo()
 
@@ -286,10 +368,12 @@ def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
         goal="Delegar cada tarea al único rol que tiene la herramienta correcta",
         backstory=(
             "No ejecutas tareas tu mismo, solo delegas. Las ventas van al "
-            "Vendedor. Las consultas de stock van al Encargado de inventario."
+            "Vendedor. Las consultas de stock van al Encargado de inventario. "
+            "Las reposiciones y correos a proveedores van al Encargado de compras."
         ),
         allow_delegation=True,
         llm=llm,
+        max_iter=8,
         verbose=False,
     )
 
@@ -310,29 +394,30 @@ def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
             "config": {"model_name": "all-MiniLM-L6-v2"},
         },
         name=f"tienda-{conversacion_id}",
-        verbose=True,
+        verbose=os.getenv("CREW_VERBOSE", "").lower() == "true",
     )
 
 
 def generar_orden_compra(producto_nombre: str, cantidad: int, proveedor_email: str) -> str:
     """Ruta directa al agente de Compras para una accion obligatoria.
 
-    No pasa por el manager: enviar un correo real es una accion con
-    efecto en el mundo real, no una decision que convenga dejar en manos
-    de que el LLM elija delegarla o no (ver hallazgo en el README).
+    No pasa por el manager: la orden se prepara siempre que la regla lo
+    pide, no cuando el LLM decide delegarla. El correo queda pendiente de
+    aprobacion del dueño.
     """
     compras = crear_agentes()["compras"]
     tarea = Task(
         description=(
-            f"Redacta y envia (con la herramienta de correo) una orden de "
-            f"reposicion de {cantidad} unidades de '{producto_nombre}' al "
-            f"proveedor {proveedor_email}. Es obligatorio usar la herramienta "
-            f"de enviar correo, no basta con redactar el texto."
+            f"Redacta una orden de reposicion de {cantidad} unidades de "
+            f"'{producto_nombre}' para el proveedor {proveedor_email} y dejala "
+            f"preparada con la herramienta de correo. Es obligatorio usar la "
+            f"herramienta, no basta con redactar el texto."
         ),
-        expected_output="Confirmacion de que el correo se envio, con su id.",
+        expected_output="Confirmacion de que el correo quedo preparado, con su numero de operacion.",
         agent=compras,
     )
-    crew = Crew(agents=[compras], tasks=[tarea], verbose=True)
+    crew = Crew(agents=[compras], tasks=[tarea],
+                verbose=os.getenv("CREW_VERBOSE", "").lower() == "true")
     return str(crew.kickoff())
 
 

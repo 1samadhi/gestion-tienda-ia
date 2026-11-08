@@ -20,6 +20,20 @@ CREATE TABLE IF NOT EXISTS productos (
     proveedor_email TEXT
 );
 
+CREATE TABLE IF NOT EXISTS operaciones_pendientes (
+    id INTEGER PRIMARY KEY,
+    tipo TEXT NOT NULL CHECK (tipo IN ('reposicion', 'correo')),
+    producto_id INTEGER REFERENCES productos(id),
+    cantidad INTEGER,
+    destinatario TEXT,
+    asunto TEXT,
+    cuerpo TEXT,
+    estado TEXT NOT NULL DEFAULT 'pendiente'
+        CHECK (estado IN ('pendiente', 'aprobada', 'descartada')),
+    resultado TEXT,
+    creada TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS movimientos (
     id INTEGER PRIMARY KEY,
     producto_id INTEGER NOT NULL REFERENCES productos(id),
