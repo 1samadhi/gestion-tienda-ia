@@ -165,11 +165,14 @@ with tab_chat:
             hilo = threading.Thread(target=trabajar, daemon=True)
             inicio = time.time()
             ultimo = "Leyendo el pedido"
+            pedido = mensaje_limpio if len(mensaje_limpio) <= 60 else mensaje_limpio[:57] + "…"
             hilo.start()
             while hilo.is_alive():
                 while not avisos.empty():
                     ultimo = avisos.get()
-                linea.markdown(f"⏳ {ultimo}… · {time.time() - inicio:.0f} s")
+                linea.markdown(
+                    f"⏳ «{neutralizar_salida(pedido)}» — {ultimo}… · {time.time() - inicio:.0f} s"
+                )
                 time.sleep(0.3)
             hilo.join()
             linea.empty()

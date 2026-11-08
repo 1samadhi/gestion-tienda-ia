@@ -230,14 +230,22 @@ _ORG = re.compile(r"org_[0-9a-z]{10,}")
 _progreso: Callable[[str], None] | None = None
 
 _FRASES_TOOL = {
-    "consultar_stock": "Inventario revisando el stock",
+    "consultar_stock": "Consultando el stock",
     "productos_bajo_minimo": "Revisando productos bajo el mínimo",
     "historial": "Revisando el historial del producto",
-    "registrar_venta": "Vendedor registrando la venta",
-    "registrar_reposicion": "Compras preparando la reposición",
-    "correo": "Compras redactando la orden al proveedor",
-    "search_memory": "Buscando en la memoria",
+    "registrar_venta": "Registrando la venta",
+    "registrar_reposicion": "Preparando la reposición",
+    "correo": "Redactando la orden al proveedor",
+    "search_memory": "Revisando el contexto de la conversación",
 }
+
+_FRASES_DELEGACION = {
+    "inventario": "Buscando el producto en el inventario",
+    "vendedor": "Preparando la venta",
+    "compras": "Preparando la compra",
+}
+
+_analisis_hechos = 0
 
 
 def _avisar_progreso(texto: str) -> None:
@@ -261,7 +269,7 @@ def _ms_desde_inicio(momento: datetime) -> float:
 
 def _llamada_llm(rol, modelo, inicio, fin, estado, tokens_entrada, tokens_salida, detalle):
     if estado == "rate_limit":
-        _avisar_progreso("Groq está ocupado, probando con otro modelo")
+        _avisar_progreso("Esperando disponibilidad del modelo")
     with _lock:
         if _activa is None:
             return
@@ -290,8 +298,14 @@ def _fase(traza: Traza, etapa: str, inicio: float, estado: str = "ok", detalle: 
 
 
 def _llm_empieza(rol: str | None) -> None:
-    # Sin rol son las llamadas internas de la memoria de CrewAI.
-    _avisar_progreso(f"{rol} pensando" if rol else "Organizando la memoria")
+    """El gerente piensa al principio (entender el pedido) y al final (armar
+    la respuesta). Los demas roles ya quedan descritos por su herramienta, y
+    las llamadas sin rol son internas de la memoria: no se anuncian."""
+    global _analisis_hechos
+    if rol != "Gerente de tienda":
+        return
+    _analisis_hechos += 1
+    _avisar_progreso("Analizando el pedido" if _analisis_hechos == 1 else "Preparando la respuesta")
 
 
 @crewai_event_bus.on(ToolUsageStartedEvent)
@@ -299,8 +313,9 @@ def _tool_inicio(_, evento):
     nombre = evento.tool_name.lower().replace(" ", "_")
     if "coworker" in nombre:
         args = evento.tool_args if isinstance(evento.tool_args, dict) else {}
-        destino = args.get("coworker") or "un compañero"
-        _avisar_progreso(f"Gerente le pasa la tarea a {destino}")
+        destino = str(args.get("coworker") or "").lower()
+        frase = next((f for clave, f in _FRASES_DELEGACION.items() if clave in destino), None)
+        _avisar_progreso(frase or "Asignando la tarea")
         return
     frase = next((f for clave, f in _FRASES_TOOL.items() if clave in nombre), None)
     _avisar_progreso(frase or f"Usando {evento.tool_name}")
@@ -308,12 +323,12 @@ def _tool_inicio(_, evento):
 
 @crewai_event_bus.on(MemoryQueryStartedEvent)
 def _mem_consulta_inicio(_, e):
-    _avisar_progreso("Buscando en la memoria")
+    _avisar_progreso("Revisando el contexto de la conversación")
 
 
 @crewai_event_bus.on(MemorySaveStartedEvent)
 def _mem_guardado_inicio(_, e):
-    _avisar_progreso("Guardando en la memoria")
+    _avisar_progreso("Actualizando la memoria")
 
 
 @crewai_event_bus.on(ToolUsageFinishedEvent)
@@ -393,7 +408,7 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
     con `validacion_entrada` en error y cero llamadas al LLM. `verificar`
     recibe la respuesta y compara contra la base (precision, IE1).
     """
-    global _activa, _t0, _progreso
+    global _activa, _t0, _progreso, _analisis_hechos
     import agentes
 
     if _llamada_llm not in agentes.OBSERVADORES_LLM:
@@ -424,8 +439,8 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
         _fase(traza, "crew:preparacion", inicio)
 
         with _lock:
-            _activa, _progreso = traza, al_progreso
-        _avisar_progreso("Gerente leyendo el pedido")
+            _activa, _progreso, _analisis_hechos = traza, al_progreso, 0
+        _avisar_progreso("Leyendo el pedido")
         inicio = time.time()
         try:
             traza.respuesta_final = str(crew.kickoff())

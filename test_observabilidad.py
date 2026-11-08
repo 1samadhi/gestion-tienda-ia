@@ -159,3 +159,27 @@ def test_crew_jerarquico_permite_delegar_a_los_tres_roles(monkeypatch):
     descripcion = " ".join(h.description for h in herramientas).lower()
     for rol in ("encargado de inventario", "vendedor", "encargado de compras"):
         assert rol in descripcion
+
+
+def test_linea_de_estado_habla_de_acciones_no_de_roles(monkeypatch):
+    from crewai.events.types.tool_usage_events import ToolUsageStartedEvent
+
+    vistos = []
+    monkeypatch.setattr(obs, "_activa", _traza("p"))
+    monkeypatch.setattr(obs, "_progreso", vistos.append)
+    monkeypatch.setattr(obs, "_analisis_hechos", 0)
+
+    obs._llm_empieza("Gerente de tienda")
+    obs._tool_inicio(None, ToolUsageStartedEvent(
+        tool_name="Delegate work to coworker", tool_args={"coworker": "Encargado de inventario"}))
+    obs._llm_empieza("Encargado de inventario")
+    obs._tool_inicio(None, ToolUsageStartedEvent(tool_name="consultar_stock", tool_args={}))
+    obs._llm_empieza(None)
+    obs._llm_empieza("Gerente de tienda")
+
+    assert vistos == [
+        "Analizando el pedido",
+        "Buscando el producto en el inventario",
+        "Consultando el stock",
+        "Preparando la respuesta",
+    ]
