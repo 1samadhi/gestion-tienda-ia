@@ -61,6 +61,7 @@ uv run streamlit run app.py --server.fileWatcherType none   # app
 uv run pytest -q                                              # tests, sin LLM ni red
 uv run python bateria.py --listar                             # casos de medición
 uv run python bateria.py --todos --repeticiones 3             # gasta cuota de Groq
+uv run python observabilidad.py [trace_id]                    # ver trazas y métricas
 ```
 
 `bateria.py` reinicia la base antes de cada caso, verifica la respuesta contra

@@ -429,3 +429,32 @@ def metricas_de(trazas: list[Traza]) -> RecolectorMetricas:
             correcto=t.correcto,
         )
     return recolector
+
+
+if __name__ == "__main__":
+    import sys
+
+    trazas = cargar_trazas()
+    if not trazas:
+        print(f"No hay trazas en {ARCHIVO_TRAZAS}. Corre bateria.py o usa el chat de app.py.")
+        sys.exit(0)
+
+    print(f"{len(trazas)} trazas en {ARCHIVO_TRAZAS}\n")
+    for t in trazas[-10:]:
+        marca = {True: "OK ", False: "MAL", None: " - "}[t.correcto]
+        print(f"[{marca}] {t.timestamp}  {t.trace_id}  {t.caso:<22} {t.estado:<9} "
+              f"{t.duracion_ms / 1000:6.1f}s {t.tokens_totales:>7} tok  {t.verificacion or ''}")
+
+    if len(sys.argv) > 1:
+        elegida = next((t for t in trazas if t.trace_id.startswith(sys.argv[1])), None)
+        if elegida:
+            print(f"\nEventos de {elegida.trace_id}:")
+            for e in elegida.eventos:
+                print(f"  {e.inicio_ms / 1000:7.1f}s {e.duracion_ms / 1000:6.1f}s {e.estado:5} "
+                      f"{e.etapa:<34} {e.modelo or '':<22} {e.tokens_entrada + e.tokens_salida:>6} tok")
+            print(f"\nRespuesta: {elegida.respuesta_final}")
+
+    print("\nMetricas (IL3.1):")
+    print(json.dumps(metricas_de(trazas).resumen(), indent=2, ensure_ascii=False))
+    print("\nAnalisis de trazas (IL3.2):")
+    print(json.dumps(AnalizadorTrazas.resumir(trazas), indent=2, ensure_ascii=False))
