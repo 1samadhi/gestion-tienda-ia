@@ -151,6 +151,7 @@ with tab_chat:
             avisos: queue.Queue[str] = queue.Queue()
             resultado = {}
             conversacion = st.session_state.conversacion_id
+            ya_pendientes = {op["id"] for op in pendientes.listar()}
 
             def trabajar():
                 resultado["traza"] = observar(
@@ -195,6 +196,20 @@ with tab_chat:
                 )
             else:
                 respuesta = traza.respuesta_final or ""
+
+            # Lo que quedo pendiente se informa desde la base, no desde lo que
+            # el modelo diga: puede afirmar "ya se envio" cuando solo se preparo.
+            nuevas = [op for op in pendientes.listar() if op["id"] not in ya_pendientes]
+            if nuevas:
+                detalle = "; ".join(
+                    f"reponer {op['cantidad']} de {op['producto']}" if op["tipo"] == "reposicion"
+                    else f"correo a {op['destinatario']}"
+                    for op in nuevas
+                )
+                respuesta += (
+                    f"\n\n> 🔒 **Esperando tu aprobación** (pestaña Stock): {detalle}. "
+                    "Nada de esto se ha ejecutado todavía."
+                )
 
             resumen = (
                 f"{traza.duracion_ms / 1000:.0f} s · {traza.tokens_totales:,} tokens · "

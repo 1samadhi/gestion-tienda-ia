@@ -473,17 +473,20 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
     if verificar is not None and traza.respuesta_final is not None:
         traza.correcto, traza.verificacion = verificar(traza.respuesta_final)
 
-    if traza.respuesta_final:
-        traza.respuesta_final = sanitizar_pii(traza.respuesta_final)
     if guardar:
         guardar_traza(traza)
     return traza
 
 
 def guardar_traza(traza: Traza, archivo: Path = ARCHIVO_TRAZAS) -> None:
+    """La respuesta se redacta al guardar, no antes: al dueño se le muestra
+    completa (el correo de su proveedor es dato del negocio), al log no."""
+    datos = traza.a_dict()
+    if datos.get("respuesta_final"):
+        datos["respuesta_final"] = sanitizar_pii(datos["respuesta_final"])
     archivo.parent.mkdir(parents=True, exist_ok=True)
     with archivo.open("a", encoding="utf-8") as f:
-        f.write(traza.a_json() + "\n")
+        f.write(json.dumps(datos, ensure_ascii=False) + "\n")
 
 
 def cargar_trazas(archivo: Path = ARCHIVO_TRAZAS) -> list[Traza]:

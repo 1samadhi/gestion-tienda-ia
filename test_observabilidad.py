@@ -183,3 +183,12 @@ def test_linea_de_estado_habla_de_acciones_no_de_roles(monkeypatch):
         "Consultando el stock",
         "Preparando la respuesta",
     ]
+
+
+def test_respuesta_completa_en_memoria_y_redactada_en_el_log(tmp_path):
+    t = _traza("r")
+    t.respuesta_final = "Correo preparado para proveedor1@example.com"
+    archivo = tmp_path / "t.jsonl"
+    obs.guardar_traza(t, archivo)
+    assert "proveedor1@example.com" in t.respuesta_final
+    assert "proveedor1@example.com" not in archivo.read_text()
