@@ -141,6 +141,7 @@ class Traza:
     tokens_reportados_crewai: int = 0
     correcto: bool | None = None
     verificacion: str | None = None
+    etiqueta: str = ""
 
     def agregar_evento(self, **datos) -> None:
         self.eventos.append(Evento(**datos))
@@ -401,7 +402,7 @@ Verificador = Callable[[str], tuple[bool, str]]
 
 def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = None,
              verificar: Verificador | None = None, guardar: bool = True,
-             al_progreso: Callable[[str], None] | None = None) -> Traza:
+             al_progreso: Callable[[str], None] | None = None, etiqueta: str = "") -> Traza:
     """Corre el crew sobre `mensaje` y devuelve su traza.
 
     Una inyeccion detectada corta antes del crew: la traza queda `bloqueado`
@@ -422,6 +423,7 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
         caso=caso,
         timestamp=datetime.now().isoformat(timespec="seconds"),
         mensaje_entrada=sanitizar_pii(mensaje),
+        etiqueta=etiqueta,
     )
     t0 = time.perf_counter()
     _t0 = time.time()
@@ -508,12 +510,48 @@ def metricas_de(trazas: list[Traza]) -> RecolectorMetricas:
     return recolector
 
 
+def comparar(trazas: list[Traza]) -> list[dict]:
+    """Una fila por etiqueta (configuracion medida): para la tabla de IE7."""
+    grupos: dict[str, list[Traza]] = {}
+    for t in trazas:
+        if t.etiqueta:
+            grupos.setdefault(t.etiqueta, []).append(t)
+    filas = []
+    for etiqueta, grupo in grupos.items():
+        resumen = metricas_de(grupo).resumen()
+        limites = [sum(1 for e in t.eventos if e.etapa.startswith("llm:") and e.detalle == "rate limit")
+                   for t in grupo]
+        filas.append({
+            "configuracion": etiqueta,
+            "corridas": len(grupo),
+            "precision_pct": resumen["precision_pct"],
+            "errores_pct": resumen["tasa_errores_pct"],
+            "p50_s": round(resumen["tiempo_p50_ms"] / 1000, 1),
+            "p95_s": round(resumen["tiempo_p95_ms"] / 1000, 1),
+            "tokens_prom": round(resumen["total_tokens"] / len(grupo)),
+            "llamadas_prom": round(statistics.mean(t.llamadas_llm for t in grupo), 1),
+            "rate_limits_prom": round(statistics.mean(limites), 1),
+        })
+    return filas
+
+
 if __name__ == "__main__":
     import sys
 
     trazas = cargar_trazas()
     if not trazas:
         print(f"No hay trazas en {ARCHIVO_TRAZAS}. Corre bateria.py o usa el chat de app.py.")
+        sys.exit(0)
+
+    if "--comparar" in sys.argv:
+        filas = comparar(trazas)
+        if not filas:
+            print("No hay corridas con etiqueta. Corre bateria.py primero.")
+            sys.exit(0)
+        columnas = list(filas[0])
+        print(" | ".join(columnas))
+        for f in filas:
+            print(" | ".join(str(f[c]) for c in columnas))
         sys.exit(0)
 
     print(f"{len(trazas)} trazas en {ARCHIVO_TRAZAS}\n")

@@ -192,3 +192,26 @@ def test_respuesta_completa_en_memoria_y_redactada_en_el_log(tmp_path):
     obs.guardar_traza(t, archivo)
     assert "proveedor1@example.com" in t.respuesta_final
     assert "proveedor1@example.com" not in archivo.read_text()
+
+
+def test_comparar_agrupa_por_configuracion():
+    a = _traza("a", eventos=[("llm:x", 1000, "ok", 100), ("llm:x", 10, "error", 0)])
+    a.etiqueta, a.correcto, a.llamadas_llm = "memoria-si", True, 1
+    a.eventos[1].detalle = "rate limit"
+    b = _traza("b", eventos=[("llm:x", 500, "ok", 50)])
+    b.etiqueta, b.correcto, b.llamadas_llm, b.tokens_entrada = "memoria-no", False, 1, 50
+    c = _traza("c")  # del chat, sin etiqueta: no entra en la comparacion
+
+    filas = {f["configuracion"]: f for f in obs.comparar([a, b, c])}
+    assert set(filas) == {"memoria-si", "memoria-no"}
+    assert filas["memoria-si"]["precision_pct"] == 100 and filas["memoria-si"]["rate_limits_prom"] == 1
+    assert filas["memoria-no"]["precision_pct"] == 0 and filas["memoria-no"]["tokens_prom"] == 50
+
+
+def test_memoria_se_apaga_por_variable(monkeypatch):
+    import agentes
+
+    monkeypatch.setenv("MEMORIA_CREW", "false")
+    assert agentes.memoria_activa() is False
+    monkeypatch.setenv("MEMORIA_CREW", "true")
+    assert agentes.memoria_activa() is True

@@ -346,6 +346,11 @@ def crear_agentes() -> dict[str, Agent]:
     return {"inventario": inventario, "ventas": ventas, "compras": compras}
 
 
+def memoria_activa() -> bool:
+    """MEMORIA_CREW=false apaga la memoria de CrewAI (para medir su costo)."""
+    return os.getenv("MEMORIA_CREW", "true").lower() != "false"
+
+
 def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
     """Crew general: el manager delega entre Inventario, Ventas y Compras.
 
@@ -388,7 +393,7 @@ def crear_crew(mensaje: str, conversacion_id: str = "default") -> Crew:
         tasks=[tarea],
         process=Process.hierarchical,
         manager_agent=manager,
-        memory=True,
+        memory=memoria_activa(),
         embedder={
             "provider": "sentence-transformer",
             "config": {"model_name": "all-MiniLM-L6-v2"},

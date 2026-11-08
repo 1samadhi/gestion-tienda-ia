@@ -13,6 +13,10 @@ Uso:
     uv run python bateria.py --listar
     uv run python bateria.py --casos consulta_nombre,venta_nombre --repeticiones 3
     uv run python bateria.py --todos --modelo openai/gpt-oss-20b
+    MEMORIA_CREW=false uv run python bateria.py --todos
+
+Cada traza queda etiquetada con su configuracion (memoria y modelo); para
+compararlas: uv run python observabilidad.py --comparar
 """
 
 from __future__ import annotations
@@ -228,6 +232,12 @@ def estado() -> Estado:
     return {p.nombre: p.stock_actual for p in consultar_stock("")}
 
 
+def etiqueta() -> str:
+    from agentes import MODELOS_FALLBACK, memoria_activa
+
+    return f"memoria-{'si' if memoria_activa() else 'no'} | {MODELOS_FALLBACK[0]}"
+
+
 def correr(caso: Caso, repeticion: int) -> None:
     from observabilidad import observar
 
@@ -240,6 +250,7 @@ def correr(caso: Caso, repeticion: int) -> None:
         caso=caso.nombre,
         conversacion_id=f"bat-{caso.nombre}-{int(time.time())}",
         verificar=lambda r: caso.verificar(antes, estado(), r),
+        etiqueta=etiqueta(),
     )
     marca = {True: "OK ", False: "MAL", None: " - "}[traza.correcto]
     print(
