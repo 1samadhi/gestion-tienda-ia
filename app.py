@@ -235,31 +235,95 @@ with tab_chat:
         )
         st.rerun()
 
-# --- Pestana 3: logs y costos acumulados de ESTA sesion -----------------
+# --- Pestana 3: tablero de observabilidad sobre logs/trazas.jsonl -------
 
 with tab_logs:
-    st.subheader("Gasto de esta sesion")
-    st.caption(
-        "Solo muestra lo que ya se gasto — no llama a nada, no cuesta "
-        "mirar esta pestaña."
-    )
-    if not st.session_state.registro:
-        st.info("Todavia no mandaste ningun mensaje por el chat.")
+    import pandas as pd
+
+    import dashboard as tablero
+    from observabilidad import ARCHIVO_TRAZAS, cargar_trazas
+
+    trazas = cargar_trazas()
+    if not trazas:
+        st.info("Todavia no hay trazas. Usa el chat o corre `uv run python bateria.py --todos`.")
     else:
-        total_tokens = sum(r["tokens"] for r in st.session_state.registro)
-        total_segundos = sum(r["segundos"] for r in st.session_state.registro)
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Mensajes", len(st.session_state.registro))
-        c2.metric("Tokens totales", f"{total_tokens:,}")
-        c3.metric("Tiempo total", f"{total_segundos:.0f}s")
+        st.caption(f"{len(trazas)} trazas en `{ARCHIVO_TRAZAS.name}`. Mirar no gasta tokens.")
+        f1, f2 = st.columns(2)
+        configs = sorted({tablero.configuracion(t) for t in trazas})
+        casos = sorted({tablero.caso_base(t) for t in trazas})
+        elegidas = f1.multiselect("Configuracion", configs, placeholder="Todas")
+        casos_elegidos = f2.multiselect("Caso", casos, placeholder="Todos")
+        vista = tablero.filtrar(trazas, elegidas, casos_elegidos)
 
-        st.dataframe(
-            list(reversed(st.session_state.registro)),
-            width="stretch",
-            hide_index=True,
-        )
+        if not vista:
+            st.warning("Ninguna traza con esos filtros.")
+        else:
+            k = tablero.kpis(vista)
+            st.markdown("**Salud de las llamadas**")
+            c = st.columns(4)
+            c[0].metric("Precision", "-" if k["precision_pct"] is None else f"{k['precision_pct']}%")
+            c[1].metric("Latencia p50", f"{k['p50_s']} s")
+            c[2].metric("Latencia p95", f"{k['p95_s']} s")
+            c[3].metric("Tokens por peticion", f"{k['tokens_prom']:,}")
+            st.markdown("**Volumen y abuso**")
+            c = st.columns(4)
+            c[0].metric("Peticiones", k["peticiones"])
+            c[1].metric("Bloqueadas por el filtro", k["bloqueadas"])
+            c[2].metric("Tasa de error", f"{k['error_pct']}%")
+            c[3].metric("Rate limits por peticion", k["rate_limits_prom"])
 
-    st.caption("Detalle de cada traza: `uv run python observabilidad.py <trace_id>`")
+            st.markdown("**Latencia por caso (s)**")
+            casos_df = pd.DataFrame(tablero.por_caso(vista)).set_index("caso")
+            st.bar_chart(casos_df[["p50_s", "p95_s"]], stack=False)
+
+            g1, g2 = st.columns(2)
+            with g1:
+                st.markdown("**Donde se va el tiempo** (s promedio por peticion)")
+                etapas = pd.DataFrame(tablero.tiempo_por_etapa(vista))
+                if not etapas.empty:
+                    st.bar_chart(etapas.set_index("etapa"), horizontal=True)
+            with g2:
+                st.markdown("**Tokens por rol** (promedio por peticion)")
+                roles = pd.DataFrame(tablero.tokens_por_rol(vista))
+                if not roles.empty:
+                    st.bar_chart(roles.set_index("rol"), horizontal=True)
+
+            st.markdown("**Latencia de cada peticion en el tiempo**")
+            serie = pd.DataFrame(tablero.serie(vista))
+            serie["hora"] = pd.to_datetime(serie["hora"])
+            st.scatter_chart(serie, x="hora", y="segundos", color="configuracion", size="tokens")
+
+            st.markdown("**Por caso**")
+            st.dataframe(casos_df, width="stretch")
+
+            from observabilidad import comparar
+
+            comparacion = comparar(vista)
+            if len(comparacion) > 1:
+                st.markdown("**Comparacion de configuraciones**")
+                st.dataframe(comparacion, width="stretch", hide_index=True)
+
+            st.markdown("**Trazas**")
+            st.dataframe(tablero.tabla_trazas(vista), width="stretch", hide_index=True)
+            por_id = {t.trace_id: t for t in vista}
+            elegida = st.selectbox(
+                "Ver las etapas de una traza", list(reversed(list(por_id))),
+                format_func=lambda i: f"{i} · {por_id[i].caso} · {por_id[i].duracion_ms / 1000:.1f} s",
+            )
+            if elegida:
+                t = por_id[elegida]
+                st.caption(f"Mensaje: {neutralizar_salida(t.mensaje_entrada)}")
+                st.dataframe(tablero.eventos_de(t), width="stretch", hide_index=True)
+
+    with st.expander("Gasto de esta sesion"):
+        if not st.session_state.registro:
+            st.caption("Todavia no mandaste ningun mensaje por el chat.")
+        else:
+            total_tokens = sum(r["tokens"] for r in st.session_state.registro)
+            total_segundos = sum(r["segundos"] for r in st.session_state.registro)
+            st.caption(f"{len(st.session_state.registro)} mensajes · {total_tokens:,} tokens · "
+                       f"{total_segundos:.0f} s")
+            st.dataframe(list(reversed(st.session_state.registro)), width="stretch", hide_index=True)
 
 # --- Pestana 4: estado del sistema, sin gastar tokens -------------------
 

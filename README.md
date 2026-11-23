@@ -124,6 +124,7 @@ la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
 | `agentes.py` | roles, tools, manager, fallback de modelos |
 | `stock.py`, `db.py` | dominio en Python puro, sin LLM |
 | `pendientes.py` | acciones que esperan aprobación del dueño |
+| `dashboard.py` | agregaciones del tablero (pestaña Logs y costos) |
 | `guardrails.py` | filtro de entrada, PII, salida segura |
 | `observabilidad.py` | trazas, métricas, analizador |
 | `bateria.py` | casos de medición con verificación |
