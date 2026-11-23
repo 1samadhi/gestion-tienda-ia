@@ -68,7 +68,7 @@ uv run python observabilidad.py [trace_id]                    # ver trazas y mé
 ```
 
 `bateria.py` reinicia la base antes de cada caso, verifica la respuesta contra
-SQLite y reemplaza el envío de Gmail por un registro local.
+SQLite y nunca aprueba pendientes (no manda correos). Resultados: `PRUEBAS.md`.
 
 ## Observabilidad
 
@@ -126,7 +126,9 @@ la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
 | `agentes.py` | roles, tools, manager, fallback de modelos |
 | `stock.py`, `db.py` | dominio en Python puro, sin LLM |
 | `pendientes.py` | acciones que esperan aprobación del dueño |
-| `dashboard.py` | agregaciones del tablero (pestaña Logs y costos) |
+| `dashboard.py` | agregaciones del tablero (pestaña Observabilidad) |
+| `estilo.py` | CSS y bloques visuales de la app |
+| `acceso.py` | clave del dueño |
 | `guardrails.py` | filtro de entrada, PII, salida segura |
 | `observabilidad.py` | trazas, métricas, analizador |
 | `bateria.py` | casos de medición con verificación |
@@ -134,6 +136,8 @@ la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
 | `test_*.py` | tests sin red |
 | `ESQUEMA-PLANIFICACION.md` | orden de decisión del sistema |
 | `SEGURIDAD-OWASP.md` | mapeo OWASP 2026 |
+| `DISENO.md` | bocetos de pantallas y del recorrido de un pedido |
+| `PRUEBAS.md` | tests, batería y resultados medidos |
 
 ## Referencias
 
