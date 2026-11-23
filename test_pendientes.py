@@ -18,7 +18,7 @@ def base_temporal(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB", tmp_path / "test.db")
     db.crear_esquema()
     db.sembrar_datos_demo()
-    agentes.nueva_peticion()
+    agentes.nueva_peticion(dueno=True)
 
 
 def _tool(t):
@@ -85,7 +85,7 @@ def test_venta_repetida_en_el_mismo_pedido_no_descuenta_dos_veces():
 def test_pedido_nuevo_si_permite_la_misma_venta():
     vender = _tool(agentes.tool_registrar_venta)
     vender("Cuaderno universitario", 3)
-    agentes.nueva_peticion()
+    agentes.nueva_peticion(dueno=True)
     vender("Cuaderno universitario", 3)
     assert _stock("Cuaderno") == 34
 
@@ -108,7 +108,7 @@ def test_tope_de_tokens_por_mensaje(monkeypatch):
     with pytest.raises(agentes.PresupuestoAgotado, match="tope de 2500"):
         llm.call([{"role": "user", "content": "x"}])
 
-    agentes.nueva_peticion()
+    agentes.nueva_peticion(dueno=True)
     assert llm.call([{"role": "user", "content": "x"}]) == "ok"
 
 

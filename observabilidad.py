@@ -403,7 +403,7 @@ Verificador = Callable[[str], tuple[bool, str]]
 def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = None,
              verificar: Verificador | None = None, guardar: bool = True,
              al_progreso: Callable[[str], None] | None = None, etiqueta: str = "",
-             historial: list[tuple[str, str]] | None = None) -> Traza:
+             historial: list[tuple[str, str]] | None = None, dueno: bool = False) -> Traza:
     """Corre el crew sobre `mensaje` y devuelve su traza.
 
     Una inyeccion detectada corta antes del crew: la traza queda `bloqueado`
@@ -439,7 +439,7 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
     else:
         inicio = time.time()
         crew = agentes.crear_crew(mensaje, conversacion_id=traza.conversacion_id,
-                                  historial=historial)
+                                  historial=historial, dueno=dueno)
         _fase(traza, "crew:preparacion", inicio)
 
         with _lock:

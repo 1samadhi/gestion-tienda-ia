@@ -51,6 +51,7 @@ Cada etapa queda como evento en la traza: duración, tokens, modelo y estado.
 uv sync
 cp .env.example .env                # GROQ_API_KEY; LangSmith es opcional
 uv run python db.py                 # base de demo
+uv run python acceso.py             # clave del dueño (sin ella el chat solo consulta)
 uv run python autenticar_gmail.py   # una vez, login de Gmail en el navegador
 ```
 
@@ -94,6 +95,7 @@ LangSmith (opcional): `LANGSMITH_TRACING=true` y `LANGSMITH_API_KEY` en `.env`.
 | Inyección indirecta | un nombre de producto con instrucciones no llega al prompt |
 | Argumentos del LLM | cantidades positivas, SQL parametrizado, `LIKE` escapado |
 | Correo a terceros | solo a proveedores registrados en la base |
+| Quién puede escribir | sin sesión de dueño, las herramientas de venta, reposición y correo se niegan |
 | Acciones irreversibles | reposición y correo esperan aprobación humana |
 | Producto equivocado o repetido | la tool resuelve el nombre sin adivinar y no repite una operación en el mismo mensaje |
 | Consumo sin tope | máximo de tokens y de rechazos por límite en cada mensaje |

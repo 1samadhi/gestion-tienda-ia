@@ -23,7 +23,7 @@ def base_temporal(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def peticion_nueva():
-    agentes.nueva_peticion()
+    agentes.nueva_peticion(dueno=True)
 
 
 def _tool(t):

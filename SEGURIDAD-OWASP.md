@@ -29,7 +29,7 @@ Tests: `uv run pytest -q` (sin red).
 |---|---|---|---|---|
 | ASI01:2026 | Agent Goal Hijack | parcial | Filtro de entrada; un nombre de producto con instrucciones no llega al prompt de otro agente (`dato_seguro`) | `test_nombre_envenenado_no_llega_al_prompt_de_otro_agente`. Prueba en vivo: correo a dirección ajena rechazado. Mismos huecos que LLM01 |
 | ASI02:2026 | Tool Misuse and Exploitation | aplicado | Validan las herramientas, no el prompt: cantidad > 0, destinatario solo proveedor registrado, producto por nombre sin adivinar, sin repetir la misma operación en un mensaje | `test_venta_y_reposicion_rechazan_cantidades_no_positivas`, `test_correo_solo_a_proveedores_registrados`, `test_resolver_producto_no_adivina`, `test_venta_repetida_en_el_mismo_pedido_no_descuenta_dos_veces` |
-| ASI03:2026 | Identity and Privilege Abuse | parcial | Mínimo privilegio por rol; Gmail con scope `gmail.send` | Sin login: quien abre la app puede vender y aprobar pendientes |
+| ASI03:2026 | Identity and Privilege Abuse | parcial | Sin sesión de dueño las herramientas que escriben se niegan (el permiso lo fija la app, no el LLM); clave como hash scrypt con sal en `.env` y 5 intentos por sesión (`acceso.py`); mínimo privilegio por rol; Gmail con scope `gmail.send` | `test_sin_sesion_las_herramientas_que_escriben_se_niegan`, `test_hash_con_sal_y_verificacion`. Hueco: una sola cuenta (dueño), sin usuarios por persona ni registro de quién aprobó |
 | ASI04:2026 | Agentic Supply Chain | parcial | `uv.lock`; sin servidores MCP ni herramientas de terceros | Sin verificación de hashes ni escaneo |
 | ASI05:2026 | Unexpected Code Execution | en la defensa | Ninguna herramienta ejecuta código ni SQL armado por el modelo | — |
 | ASI06:2026 | Memory and Context Poisoning | parcial | Memoria vectorial apagada; el historial corto (3 turnos) pasa por el filtro y descarta turnos con inyección | `test_turno_con_inyeccion_no_se_arrastra`. Hueco: un ataque repartido en varios turnos inocentes |
@@ -50,7 +50,7 @@ Tests: `uv run pytest -q` (sin red).
 
 ## Lo que no cubre
 
-- Login: no hay roles de usuario en la app (ASI03).
+- Usuarios individuales: hay una sola clave de dueño, sin registro de quién aprobó (ASI03).
 - Inyección en hex, texto invertido, idiomas no listados o paráfrasis nuevas (LLM01).
 - Ataques repartidos en varios turnos (ASI06).
 - Verificar la respuesta del chat contra la base antes de mostrarla (LLM07).

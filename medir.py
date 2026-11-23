@@ -22,7 +22,7 @@ def tokens_de(crew) -> int:
 
 
 def correr(mensaje: str, etiqueta: str, conversacion_id: str) -> None:
-    crew = crear_crew(mensaje, conversacion_id=conversacion_id)
+    crew = crear_crew(mensaje, conversacion_id=conversacion_id, dueno=True)
     t0 = time.perf_counter()
     salida = crew.kickoff()
     seg = time.perf_counter() - t0

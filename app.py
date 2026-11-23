@@ -28,6 +28,7 @@ from pathlib import Path
 
 import streamlit as st
 
+import acceso
 import pendientes
 from agentes import modelo
 from db import DB as RUTA_DB
@@ -49,6 +50,30 @@ if "mensajes" not in st.session_state:
     st.session_state.mensajes = []
 if "registro" not in st.session_state:
     st.session_state.registro = []  # [{hora, mensaje, segundos, tokens}]
+if "dueno" not in st.session_state:
+    st.session_state.dueno = False
+    st.session_state.intentos = 0
+
+with st.sidebar:
+    if st.session_state.dueno:
+        st.success("Sesión de dueño: puedes vender y aprobar.")
+        if st.button("Cerrar sesión"):
+            st.session_state.dueno = False
+            st.rerun()
+    elif not acceso.hay_clave():
+        st.info("Modo consulta. Para habilitar ventas: `uv run python acceso.py`.")
+    elif st.session_state.intentos >= acceso.MAX_INTENTOS:
+        st.error("Demasiados intentos. Recarga la página para reintentar.")
+    else:
+        st.caption("Modo consulta: sin sesión el chat solo lee el stock.")
+        with st.form("login"):
+            clave = st.text_input("Clave del dueño", type="password")
+            if st.form_submit_button("Entrar"):
+                if acceso.verificar_clave(clave):
+                    st.session_state.dueno, st.session_state.intentos = True, 0
+                    st.rerun()
+                st.session_state.intentos += 1
+                st.error("Clave incorrecta.")
 
 tab_stock, tab_chat, tab_logs, tab_estado = st.tabs(
     ["📋 Stock", "💬 Chat", "📊 Logs y costos", "🩺 Estado del sistema"]
@@ -60,7 +85,8 @@ with tab_stock:
     por_aprobar = pendientes.listar()
     if por_aprobar:
         st.subheader(f"Pendientes de aprobación ({len(por_aprobar)})")
-        st.caption("Lo propuso un agente. No se ejecuta hasta que lo apruebes.")
+        st.caption("Lo propuso un agente. No se ejecuta hasta que lo apruebes."
+                   + ("" if st.session_state.dueno else " Inicia sesión para aprobar."))
         for op in por_aprobar:
             if op["tipo"] == "reposicion":
                 texto = f"Reponer **{op['cantidad']}** unidades de **{op['producto']}**"
@@ -71,6 +97,8 @@ with tab_stock:
             if op["tipo"] == "correo":
                 with col_t.expander("Ver correo"):
                     st.text(op["cuerpo"])
+            if not st.session_state.dueno:
+                continue
             if col_a.button("Aprobar", key=f"ok{op['id']}"):
                 try:
                     st.toast(pendientes.aprobar(op["id"], enviar_correo))
@@ -155,6 +183,7 @@ with tab_chat:
             avisos: queue.Queue[str] = queue.Queue()
             resultado = {}
             conversacion = st.session_state.conversacion_id
+            es_dueno = st.session_state.dueno
             ya_pendientes = {op["id"] for op in pendientes.listar()}
 
             def trabajar():
@@ -164,6 +193,7 @@ with tab_chat:
                     conversacion_id=conversacion,
                     al_progreso=avisos.put,
                     historial=historial,
+                    dueno=es_dueno,
                 )
 
             # El crew corre en otro hilo; este hilo solo pinta la linea de

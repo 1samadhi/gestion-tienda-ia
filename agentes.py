@@ -101,16 +101,27 @@ class PresupuestoAgotado(RuntimeError):
     pass
 
 
-_peticion = {"tokens": 0, "limites": 0}
+_peticion = {"tokens": 0, "limites": 0, "dueno": False}
 _hechas: set[tuple] = set()
 _lock = threading.Lock()
 
 
-def nueva_peticion() -> None:
-    """Reinicia los topes y el registro de operaciones de un mensaje."""
+def nueva_peticion(dueno: bool = False) -> None:
+    """Reinicia los topes y el registro de operaciones de un mensaje.
+
+    `dueno` habilita las herramientas que escriben. Se decide aqui, fuera del
+    LLM: un cliente que convence al agente igual choca con la herramienta.
+    """
     with _lock:
-        _peticion.update(tokens=0, limites=0)
+        _peticion.update(tokens=0, limites=0, dueno=dueno)
         _hechas.clear()
+
+
+def _sin_permiso() -> str | None:
+    if _peticion["dueno"]:
+        return None
+    return ("Rechazado: solo el dueño puede vender, reponer o escribir a proveedores. "
+            "Debe iniciar sesion en la app.")
 
 
 def _espera_sugerida(error: Exception) -> float:
@@ -264,6 +275,8 @@ def tool_registrar_venta(producto: str, cantidad: int) -> str:
     por debajo, se prepara sola la orden al proveedor (la decide un numero,
     no el LLM) y queda pendiente de aprobacion del dueño.
     """
+    if rechazo := _sin_permiso():
+        return rechazo
     p = resolver_producto(producto)
     if not _una_vez("venta", p.id, cantidad):
         return f"Esa venta de {_nombre(p)} ya se registro en este pedido. No se repite."
@@ -284,6 +297,8 @@ def tool_registrar_venta(producto: str, cantidad: int) -> str:
 def tool_registrar_reposicion(producto: str, cantidad: int) -> str:
     """Registra la llegada de un pedido del proveedor. `producto` es el nombre
     o el #id. No suma stock: queda pendiente hasta que el dueño la apruebe."""
+    if rechazo := _sin_permiso():
+        return rechazo
     p = resolver_producto(producto)
     if not _una_vez("reposicion", p.id, cantidad):
         return f"Esa reposicion de {_nombre(p)} ya quedo pendiente en este pedido. No se repite."
@@ -300,6 +315,8 @@ def tool_enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> str:
     dueño lo apruebe en la app."""
     # El destinatario lo escribe el LLM: una inyeccion que llegue hasta Compras
     # podria apuntar el correo a cualquier parte. Se decide contra la base.
+    if rechazo := _sin_permiso():
+        return rechazo
     if destinatario.strip().lower() not in proveedores_registrados():
         return f"Rechazado: {destinatario!r} no es un proveedor registrado. No se preparo nada."
     if not _una_vez("correo", destinatario.strip().lower()):
@@ -384,7 +401,7 @@ def armar_descripcion(mensaje: str, historial: list[tuple[str, str]] | None = No
 
 
 def crear_crew(mensaje: str, conversacion_id: str = "default",
-               historial: list[tuple[str, str]] | None = None) -> Crew:
+               historial: list[tuple[str, str]] | None = None, dueno: bool = False) -> Crew:
     """Crew general: el manager delega entre Inventario, Ventas y Compras.
 
     La orden automatica al proveedor no pasa por aqui: ver
@@ -398,7 +415,7 @@ def crear_crew(mensaje: str, conversacion_id: str = "default",
     Embedder local (`sentence-transformer`): Groq no ofrece endpoint de
     embeddings, mismo motivo por el que el curso usa HuggingFace en el RAG.
     """
-    nueva_peticion()
+    nueva_peticion(dueno)
     agentes = crear_agentes()
     llm = modelo()
 
@@ -461,6 +478,6 @@ def generar_orden_compra(producto_nombre: str, cantidad: int, proveedor_email: s
 
 
 if __name__ == "__main__":
-    crew = crear_crew("Vende 2 unidades del producto #4 y dime como queda el stock.")
+    crew = crear_crew("Vende 2 unidades del producto #4 y dime como queda el stock.", dueno=True)
     print(crew.kickoff())
     forzar_envio_a_langsmith()
