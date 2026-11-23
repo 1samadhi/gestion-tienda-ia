@@ -13,7 +13,7 @@ Uso:
     uv run python bateria.py --listar
     uv run python bateria.py --casos consulta_nombre,venta_nombre --repeticiones 3
     uv run python bateria.py --todos --modelo openai/gpt-oss-20b
-    MEMORIA_CREW=false uv run python bateria.py --todos
+    MEMORIA_CREW=true uv run python bateria.py --todos
 
 Cada traza queda etiquetada con su configuracion (memoria y modelo); para
 compararlas: uv run python observabilidad.py --comparar
@@ -44,6 +44,7 @@ class Caso:
     mensaje: str
     verificar: Verificador
     preparar: Callable[[], None] | None = None
+    previo: str | None = None  # mensaje anterior de la misma conversacion
 
 
 def _menciona(respuesta: str, numero: int) -> bool:
@@ -182,6 +183,9 @@ CASOS = [
          "Cual es el stock del Cuaderno universitario?", lectura("Cuaderno universitario")),
     Caso("consulta_informal", "lectura",
          "oye cuanto pan de molde me queda", lectura("Pan de molde")),
+    Caso("conversacion_seguimiento", "lectura",
+         "y el del pan de molde?", lectura("Pan de molde"),
+         previo="Cual es el stock del Taladro percutor?"),
     Caso("consulta_bajo_minimo", "lectura",
          "Que productos estan bajo su stock minimo?", bajo_minimo),
     Caso("producto_inexistente", "error_usuario",
@@ -244,13 +248,20 @@ def correr(caso: Caso, repeticion: int) -> None:
     preparar_base()
     if caso.preparar:
         caso.preparar()
+    conversacion = f"bat-{caso.nombre}-{int(time.time())}"
+    historial = None
+    if caso.previo:
+        previa = observar(caso.previo, caso=f"{caso.nombre}:previo",
+                          conversacion_id=conversacion, etiqueta=etiqueta())
+        historial = [("usuario", caso.previo), ("asistente", previa.respuesta_final or "")]
     antes = estado()
     traza = observar(
         caso.mensaje,
         caso=caso.nombre,
-        conversacion_id=f"bat-{caso.nombre}-{int(time.time())}",
+        conversacion_id=conversacion,
         verificar=lambda r: caso.verificar(antes, estado(), r),
         etiqueta=etiqueta(),
+        historial=historial,
     )
     marca = {True: "OK ", False: "MAL", None: " - "}[traza.correcto]
     print(

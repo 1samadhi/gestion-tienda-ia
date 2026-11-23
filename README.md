@@ -110,8 +110,10 @@ la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
   negociar con proveedores), el caso que el curso reserva para un framework de roles.
 - **Lo irreversible no depende del LLM:** la orden de compra se dispara por
   regla y va directo a Compras, sin pasar por el manager.
-- **Memoria nativa de CrewAI** con embeddings locales (Groq no ofrece
-  embeddings); el historial de movimientos vive en SQLite.
+- **Contexto por historial corto**, no por memoria vectorial: los últimos 3
+  turnos van en el pedido. La memoria de CrewAI quedó opcional
+  (`MEMORIA_CREW=true`): medida, multiplicaba la latencia por ~5 sin mejorar
+  la precisión (p50 35 s → 6 s).
 - **Fallback de modelos:** si Groq devuelve rate limit, se rota entre
   `gpt-oss-120b`, `qwen3.8-27b` y `gpt-oss-20b` (cupos separados).
 

@@ -142,6 +142,10 @@ with tab_chat:
     mensaje = st.chat_input("Ej: Vende 2 unidades del Taladro percutor")
     if mensaje:
         mensaje_limpio = sanitizar_entrada(mensaje)
+        historial = [
+            ("usuario" if autor == "user" else "asistente", texto)
+            for autor, texto, _ in st.session_state.mensajes
+        ]
         st.session_state.mensajes.append(("user", mensaje_limpio, None))
         with st.chat_message("user"):
             st.text(mensaje_limpio)
@@ -159,6 +163,7 @@ with tab_chat:
                     caso="chat",
                     conversacion_id=conversacion,
                     al_progreso=avisos.put,
+                    historial=historial,
                 )
 
             # El crew corre en otro hilo; este hilo solo pinta la linea de

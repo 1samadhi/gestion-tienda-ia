@@ -208,10 +208,10 @@ def test_comparar_agrupa_por_configuracion():
     assert filas["memoria-no"]["precision_pct"] == 0 and filas["memoria-no"]["tokens_prom"] == 50
 
 
-def test_memoria_se_apaga_por_variable(monkeypatch):
+def test_memoria_apagada_salvo_que_se_pida(monkeypatch):
     import agentes
 
-    monkeypatch.setenv("MEMORIA_CREW", "false")
+    monkeypatch.delenv("MEMORIA_CREW", raising=False)
     assert agentes.memoria_activa() is False
     monkeypatch.setenv("MEMORIA_CREW", "true")
     assert agentes.memoria_activa() is True
