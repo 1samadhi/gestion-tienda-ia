@@ -1,0 +1,16 @@
+[theme]
+base = "light"
+primaryColor = "#0B7BD3"
+backgroundColor = "#F4F7FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1A2433"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
+baseRadius = "10px"
+borderColor = "#E3E9F1"
+showWidgetBorder = true
+
+[server]
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false

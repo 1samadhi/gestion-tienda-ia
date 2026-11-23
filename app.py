@@ -29,6 +29,7 @@ from pathlib import Path
 import streamlit as st
 
 import acceso
+import estilo
 import pendientes
 from agentes import modelo
 from db import DB as RUTA_DB
@@ -41,8 +42,8 @@ RAIZ = Path(__file__).parent
 TOKEN_GMAIL = RAIZ / "gmail_token.json"
 MEMORIA_DIR = Path.home() / ".local" / "share" / "gestion-tienda-ia" / "memory"
 
-st.set_page_config(page_title="Gestion de Tienda IA", page_icon="📦", layout="wide")
-st.title("📦 Gestion de Tienda IA")
+st.set_page_config(page_title="Gestión de Tienda IA", page_icon="📦", layout="wide")
+st.markdown(estilo.CSS, unsafe_allow_html=True)
 
 if "conversacion_id" not in st.session_state:
     st.session_state.conversacion_id = str(uuid.uuid4())[:8]
@@ -55,9 +56,10 @@ if "dueno" not in st.session_state:
     st.session_state.intentos = 0
 
 with st.sidebar:
+    st.markdown("### 🔐 Acceso")
     if st.session_state.dueno:
         st.success("Sesión de dueño: puedes vender y aprobar.")
-        if st.button("Cerrar sesión"):
+        if st.button("Cerrar sesión", width="stretch"):
             st.session_state.dueno = False
             st.rerun()
     elif not acceso.hay_clave():
@@ -65,101 +67,80 @@ with st.sidebar:
     elif st.session_state.intentos >= acceso.MAX_INTENTOS:
         st.error("Demasiados intentos. Recarga la página para reintentar.")
     else:
-        st.caption("Modo consulta: sin sesión el chat solo lee el stock.")
+        st.caption("Sin sesión el chat solo consulta el stock.")
         with st.form("login"):
             clave = st.text_input("Clave del dueño", type="password")
-            if st.form_submit_button("Entrar"):
+            if st.form_submit_button("Entrar", type="primary", width="stretch"):
                 if acceso.verificar_clave(clave):
                     st.session_state.dueno, st.session_state.intentos = True, 0
                     st.rerun()
                 st.session_state.intentos += 1
                 st.error("Clave incorrecta.")
 
+st.markdown(estilo.encabezado(st.session_state.dueno), unsafe_allow_html=True)
+
 tab_stock, tab_chat, tab_logs, tab_estado = st.tabs(
-    ["📋 Stock", "💬 Chat", "📊 Logs y costos", "🩺 Estado del sistema"]
+    ["📋 Stock", "💬 Chat", "📊 Observabilidad", "🩺 Estado del sistema"]
 )
 
 # --- Pestana 1: stock directo a la base, sin LLM -----------------------
 
 with tab_stock:
+    productos = consultar_stock("")
+    bajos = productos_bajo_minimo()
     por_aprobar = pendientes.listar()
+    st.markdown(estilo.franja([
+        ("Productos", str(len(productos))),
+        ("Unidades en stock", f"{sum(p.stock_actual for p in productos):,}".replace(",", ".")),
+        ("Bajo el mínimo", str(len(bajos))),
+        ("Por aprobar", str(len(por_aprobar))),
+    ]), unsafe_allow_html=True)
+
     if por_aprobar:
-        st.subheader(f"Pendientes de aprobación ({len(por_aprobar)})")
-        st.caption("Lo propuso un agente. No se ejecuta hasta que lo apruebes."
-                   + ("" if st.session_state.dueno else " Inicia sesión para aprobar."))
+        nota = ("Propuestas por un agente; no se ejecutan hasta que las apruebes."
+                if st.session_state.dueno else "Inicia sesión de dueño para aprobarlas.")
+        st.markdown(estilo.seccion("Pendientes de", "aprobación", nota), unsafe_allow_html=True)
         for op in por_aprobar:
-            if op["tipo"] == "reposicion":
-                texto = f"Reponer **{op['cantidad']}** unidades de **{op['producto']}**"
-            else:
-                texto = f"Enviar correo a **{op['destinatario']}** — {op['asunto']}"
-            col_t, col_a, col_d = st.columns([6, 1, 1])
-            col_t.markdown(f"#{op['id']} · {texto}")
+            col_t, col_a, col_d = st.columns([7, 1.2, 1.2], vertical_alignment="center")
+            col_t.markdown(estilo.pendiente(op), unsafe_allow_html=True)
             if op["tipo"] == "correo":
                 with col_t.expander("Ver correo"):
                     st.text(op["cuerpo"])
             if not st.session_state.dueno:
                 continue
-            if col_a.button("Aprobar", key=f"ok{op['id']}"):
+            if col_a.button("Aprobar", key=f"ok{op['id']}", type="primary", width="stretch"):
                 try:
                     st.toast(pendientes.aprobar(op["id"], enviar_correo))
                 except Exception as e:
                     st.toast(f"No se pudo: {e}")
                 st.rerun()
-            if col_d.button("Descartar", key=f"no{op['id']}"):
+            if col_d.button("Descartar", key=f"no{op['id']}", width="stretch"):
                 pendientes.descartar(op["id"])
                 st.rerun()
-        st.divider()
 
-    col_stock, col_alerta = st.columns(2)
+    st.markdown(estilo.seccion("Stock", "actual", "directo desde la base, sin IA"),
+                unsafe_allow_html=True)
+    st.markdown(estilo.tarjetas(productos), unsafe_allow_html=True)
 
-    with col_stock:
-        st.subheader("Stock actual")
-        productos = consultar_stock("")
-        st.dataframe(
-            [
-                {
-                    "ID": p.id,
-                    "Producto": p.nombre,
-                    "Stock": p.stock_actual,
-                    "Minimo": p.stock_minimo,
-                    "Bajo minimo": "si" if p.bajo_minimo else "",
-                }
-                for p in productos
-            ],
-            width="stretch",
-            hide_index=True,
-        )
-
-    with col_alerta:
-        st.subheader("Bajo el minimo")
-        bajos = productos_bajo_minimo()
-        if not bajos:
-            st.success("Ningun producto esta bajo su minimo.")
+    st.markdown(estilo.seccion("Historial de", "movimientos"), unsafe_allow_html=True)
+    opciones = {p.nombre: p.id for p in productos}
+    elegido = st.selectbox("Producto", list(opciones))
+    if elegido:
+        movs = historial_producto(opciones[elegido])
+        if not movs:
+            st.caption("Sin movimientos registrados.")
         else:
-            for p in bajos:
-                st.warning(
-                    f"**{p.nombre}** — {p.stock_actual}/{p.stock_minimo} "
-                    f"— proveedor {p.proveedor_email}"
-                )
-
-        with st.expander("Historial de un producto"):
-            opciones = {p.nombre: p.id for p in productos}
-            elegido = st.selectbox("Producto", list(opciones), label_visibility="collapsed")
-            if elegido:
-                movs = historial_producto(opciones[elegido])
-                if not movs:
-                    st.caption("Sin movimientos registrados.")
-                else:
-                    for m in movs:
-                        st.caption(f"{m['fecha']} — {m['tipo']} de {m['cantidad']}")
+            st.dataframe(
+                [{"Fecha": m["fecha"], "Tipo": m["tipo"], "Cantidad": m["cantidad"]} for m in movs],
+                width="stretch", hide_index=True,
+            )
 
 # --- Pestana 2: chat, pasa por los agentes (CrewAI + Groq) --------------
 
 with tab_chat:
-    st.caption(
-        "Cada mensaje pasa por el gerente y los agentes (Groq). Para solo mirar "
-        "el stock usa la pestaña Stock: es gratis e instantáneo."
-    )
+    st.markdown(estilo.seccion("Chat con los", "agentes",
+                               "cada mensaje usa IA (Groq); para solo mirar el stock usa la pestaña Stock"),
+                unsafe_allow_html=True)
 
     for autor, texto, resumen in st.session_state.mensajes:
         with st.chat_message(autor):
@@ -275,13 +256,13 @@ with tab_logs:
 
     trazas = cargar_trazas()
     if not trazas:
-        st.info("Todavia no hay trazas. Usa el chat o corre `uv run python bateria.py --todos`.")
+        st.info("Todavía no hay trazas. Usa el chat o corre `uv run python bateria.py --todos`.")
     else:
         st.caption(f"{len(trazas)} trazas en `{ARCHIVO_TRAZAS.name}`. Mirar no gasta tokens.")
         f1, f2 = st.columns(2)
         configs = sorted({tablero.configuracion(t) for t in trazas})
         casos = sorted({tablero.caso_base(t) for t in trazas})
-        elegidas = f1.multiselect("Configuracion", configs, placeholder="Todas")
+        elegidas = f1.multiselect("Configuración", configs, placeholder="Todas")
         casos_elegidos = f2.multiselect("Caso", casos, placeholder="Todos")
         vista = tablero.filtrar(trazas, elegidas, casos_elegidos)
 
@@ -289,51 +270,64 @@ with tab_logs:
             st.warning("Ninguna traza con esos filtros.")
         else:
             k = tablero.kpis(vista)
-            st.markdown("**Salud de las llamadas**")
+            st.markdown(estilo.seccion("Salud de las", "llamadas"), unsafe_allow_html=True)
             c = st.columns(4)
-            c[0].metric("Precision", "-" if k["precision_pct"] is None else f"{k['precision_pct']}%")
+            c[0].metric("Precisión", "-" if k["precision_pct"] is None else f"{k['precision_pct']}%")
             c[1].metric("Latencia p50", f"{k['p50_s']} s")
             c[2].metric("Latencia p95", f"{k['p95_s']} s")
-            c[3].metric("Tokens por peticion", f"{k['tokens_prom']:,}")
-            st.markdown("**Volumen y abuso**")
+            c[3].metric("Tokens por petición", f"{k['tokens_prom']:,}")
+            st.markdown(estilo.seccion("Volumen y", "abuso"), unsafe_allow_html=True)
             c = st.columns(4)
             c[0].metric("Peticiones", k["peticiones"])
             c[1].metric("Bloqueadas por el filtro", k["bloqueadas"])
             c[2].metric("Tasa de error", f"{k['error_pct']}%")
-            c[3].metric("Rate limits por peticion", k["rate_limits_prom"])
+            c[3].metric("Rate limits por petición", k["rate_limits_prom"])
 
-            st.markdown("**Latencia por caso (s)**")
-            casos_df = pd.DataFrame(tablero.por_caso(vista)).set_index("caso")
-            st.bar_chart(casos_df[["p50_s", "p95_s"]], stack=False)
+            st.markdown(estilo.seccion("Latencia por", "caso", "segundos"), unsafe_allow_html=True)
+            casos_df = pd.DataFrame(tablero.por_caso(vista)).set_index("caso").rename(columns={
+                "corridas": "Corridas", "p50_s": "p50 (s)", "p95_s": "p95 (s)",
+                "tokens_prom": "Tokens prom.", "rate_limits": "Rate limits",
+                "errores": "Errores", "precision_pct": "Precisión %",
+            })
+            casos_df.index.name = "Caso"
+            st.bar_chart(casos_df[["p50 (s)", "p95 (s)"]], stack=False, horizontal=True,
+                         color=["#0B7BD3", "#9CCBF2"], y_label="", x_label="segundos",
+                         height=max(260, 34 * len(casos_df)))
 
             g1, g2 = st.columns(2)
             with g1:
-                st.markdown("**Donde se va el tiempo** (s promedio por peticion)")
+                st.markdown(estilo.seccion("Dónde se va el", "tiempo", "s promedio por petición"),
+                            unsafe_allow_html=True)
                 etapas = pd.DataFrame(tablero.tiempo_por_etapa(vista))
                 if not etapas.empty:
-                    st.bar_chart(etapas.set_index("etapa"), horizontal=True)
+                    st.bar_chart(etapas.set_index("etapa"), horizontal=True, color="#0B7BD3",
+                                 y_label="", x_label="segundos")
             with g2:
-                st.markdown("**Tokens por rol** (promedio por peticion)")
+                st.markdown(estilo.seccion("Tokens por", "rol", "promedio por petición"),
+                            unsafe_allow_html=True)
                 roles = pd.DataFrame(tablero.tokens_por_rol(vista))
                 if not roles.empty:
-                    st.bar_chart(roles.set_index("rol"), horizontal=True)
+                    st.bar_chart(roles.set_index("rol"), horizontal=True, color="#2BA36B",
+                                 y_label="", x_label="tokens")
 
-            st.markdown("**Latencia de cada peticion en el tiempo**")
+            st.markdown(estilo.seccion("Cada petición en el", "tiempo",
+                                       "tamaño = tokens"), unsafe_allow_html=True)
             serie = pd.DataFrame(tablero.serie(vista))
             serie["hora"] = pd.to_datetime(serie["hora"])
             st.scatter_chart(serie, x="hora", y="segundos", color="configuracion", size="tokens")
 
-            st.markdown("**Por caso**")
+            st.markdown(estilo.seccion("Detalle por", "caso"), unsafe_allow_html=True)
             st.dataframe(casos_df, width="stretch")
 
             from observabilidad import comparar
 
             comparacion = comparar(vista)
             if len(comparacion) > 1:
-                st.markdown("**Comparacion de configuraciones**")
+                st.markdown(estilo.seccion("Comparación de", "configuraciones"),
+                            unsafe_allow_html=True)
                 st.dataframe(comparacion, width="stretch", hide_index=True)
 
-            st.markdown("**Trazas**")
+            st.markdown(estilo.seccion("Trazas", "recientes"), unsafe_allow_html=True)
             st.dataframe(tablero.tabla_trazas(vista), width="stretch", hide_index=True)
             por_id = {t.trace_id: t for t in vista}
             elegida = st.selectbox(
@@ -345,9 +339,9 @@ with tab_logs:
                 st.caption(f"Mensaje: {neutralizar_salida(t.mensaje_entrada)}")
                 st.dataframe(tablero.eventos_de(t), width="stretch", hide_index=True)
 
-    with st.expander("Gasto de esta sesion"):
+    with st.expander("Gasto de esta sesión"):
         if not st.session_state.registro:
-            st.caption("Todavia no mandaste ningun mensaje por el chat.")
+            st.caption("Todavía no mandaste ningún mensaje por el chat.")
         else:
             total_tokens = sum(r["tokens"] for r in st.session_state.registro)
             total_segundos = sum(r["segundos"] for r in st.session_state.registro)
@@ -358,7 +352,8 @@ with tab_logs:
 # --- Pestana 4: estado del sistema, sin gastar tokens -------------------
 
 with tab_estado:
-    st.subheader("Chequeos locales (gratis, no llaman a Groq)")
+    st.markdown(estilo.seccion("Estado del", "sistema", "chequeos locales, no llaman a Groq"),
+                unsafe_allow_html=True)
 
     col_a, col_b, col_c = st.columns(3)
 
@@ -394,11 +389,11 @@ with tab_estado:
             archivos = list(MEMORIA_DIR.rglob("*.lance"))
             st.success(f"{len(archivos)} fragmento(s) en LanceDB")
         else:
-            st.info("Todavia no se genero memoria (correr un chat primero)")
+            st.info("Apagada (MEMORIA_CREW=false): el contexto va por historial corto.")
 
     st.divider()
-    st.markdown("**Conexion con Groq** (esto SI gasta unos tokens — es manual, a proposito)")
-    if st.button("Probar conexion ahora"):
+    st.markdown("**Conexión con Groq** (esto sí gasta unos tokens; es manual a propósito)")
+    if st.button("Probar conexión ahora"):
         with st.spinner("Probando..."):
             try:
                 llm = modelo()
