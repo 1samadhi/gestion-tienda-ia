@@ -161,3 +161,21 @@ def neutralizar_salida(texto: str) -> str:
     t = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"[imagen omitida: \1]", t)
     t = re.sub(r"\[([^\]]+)\]\(\s*(?:https?|javascript|data|vbscript):[^)]*\)", r"\1", t)
     return t
+
+
+_GUIONES = str.maketrans({c: "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2212"})
+_PALABRAS_NUMERO = {
+    "un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6,
+    "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11, "doce": 12, "quince": 15,
+    "veinte": 20, "treinta": 30, "cincuenta": 50, "cien": 100, "mil": 1000,
+}
+
+
+def cantidades_del_pedido(texto: str) -> set[int]:
+    """Cantidades positivas escritas en el pedido. Un numero con signo menos
+    o pegado a `#` (un id de producto) no cuenta."""
+    t = normalizar(texto).translate(_GUIONES)
+    cifras = re.findall(r"(?<![\w#.,-])(\d{1,3}(?:\.\d{3})+|\d+)(?![\w.,]\d)", t)
+    cantidades = {int(c.replace(".", "")) for c in cifras}
+    cantidades |= {_PALABRAS_NUMERO[p] for p in re.findall(r"[a-z]+", t) if p in _PALABRAS_NUMERO}
+    return {c for c in cantidades if c > 0}

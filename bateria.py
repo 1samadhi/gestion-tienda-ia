@@ -74,7 +74,8 @@ def _cambio(antes: Estado, despues: Estado, producto: str, delta: int) -> bool:
 
 NIEGA = re.compile(
     r"no (?:hay|existe|tenemos|se encontr|encontr|figura|aparece|est[aá] registrad|coincid)"
-    r"|inexistente|no se pudo|insuficiente|no alcanza|solo (?:hay|quedan|tenemos)",
+    r"|inexistente|no se (?:ha )?pod|no se puede|no es v[aá]lid|no (?:se )?permit"
+    r"|insuficiente|no alcanza|solo (?:hay|quedan|tenemos|permite|acepta)",
     re.IGNORECASE,
 )
 

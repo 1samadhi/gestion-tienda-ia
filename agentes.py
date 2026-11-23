@@ -101,19 +101,20 @@ class PresupuestoAgotado(RuntimeError):
     pass
 
 
-_peticion = {"tokens": 0, "limites": 0, "dueno": False}
+_peticion = {"tokens": 0, "limites": 0, "dueno": False, "pedido": None}
 _hechas: set[tuple] = set()
 _lock = threading.Lock()
 
 
-def nueva_peticion(dueno: bool = False) -> None:
+def nueva_peticion(dueno: bool = False, pedido: str | None = None) -> None:
     """Reinicia los topes y el registro de operaciones de un mensaje.
 
     `dueno` habilita las herramientas que escriben. Se decide aqui, fuera del
     LLM: un cliente que convence al agente igual choca con la herramienta.
+    `pedido` es el texto del dueño: las cantidades se contrastan contra el.
     """
     with _lock:
-        _peticion.update(tokens=0, limites=0, dueno=dueno)
+        _peticion.update(tokens=0, limites=0, dueno=dueno, pedido=pedido)
         _hechas.clear()
 
 
@@ -122,6 +123,18 @@ def _sin_permiso() -> str | None:
         return None
     return ("Rechazado: solo el dueño puede vender, reponer o escribir a proveedores. "
             "Debe iniciar sesion en la app.")
+
+
+def _cantidad_no_pedida(cantidad: int) -> str | None:
+    """El modelo llego a "corregir" un -5 a 5 y vendio: la herramienta no ve
+    el signo original. La cantidad tiene que estar escrita en el pedido."""
+    from guardrails import cantidades_del_pedido
+
+    pedido = _peticion["pedido"]
+    if pedido is None or cantidad in cantidades_del_pedido(pedido):
+        return None
+    return (f"Rechazado: la cantidad {cantidad} no aparece en el pedido del dueño. "
+            "No se cambio nada; hay que confirmar la cantidad con el.")
 
 
 def _espera_sugerida(error: Exception) -> float:
@@ -275,7 +288,7 @@ def tool_registrar_venta(producto: str, cantidad: int) -> str:
     por debajo, se prepara sola la orden al proveedor (la decide un numero,
     no el LLM) y queda pendiente de aprobacion del dueño.
     """
-    if rechazo := _sin_permiso():
+    if rechazo := _sin_permiso() or _cantidad_no_pedida(cantidad):
         return rechazo
     p = resolver_producto(producto)
     if not _una_vez("venta", p.id, cantidad):
@@ -297,7 +310,7 @@ def tool_registrar_venta(producto: str, cantidad: int) -> str:
 def tool_registrar_reposicion(producto: str, cantidad: int) -> str:
     """Registra la llegada de un pedido del proveedor. `producto` es el nombre
     o el #id. No suma stock: queda pendiente hasta que el dueño la apruebe."""
-    if rechazo := _sin_permiso():
+    if rechazo := _sin_permiso() or _cantidad_no_pedida(cantidad):
         return rechazo
     p = resolver_producto(producto)
     if not _una_vez("reposicion", p.id, cantidad):
@@ -415,7 +428,7 @@ def crear_crew(mensaje: str, conversacion_id: str = "default",
     Embedder local (`sentence-transformer`): Groq no ofrece endpoint de
     embeddings, mismo motivo por el que el curso usa HuggingFace en el RAG.
     """
-    nueva_peticion(dueno)
+    nueva_peticion(dueno, pedido=mensaje)
     agentes = crear_agentes()
     llm = modelo()
 

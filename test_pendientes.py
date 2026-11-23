@@ -124,3 +124,32 @@ def test_tope_de_rechazos_por_limite(monkeypatch):
 
     with pytest.raises(agentes.PresupuestoAgotado, match="rechazo 4 llamadas"):
         agentes.modelo().call([{"role": "user", "content": "x"}])
+
+
+@pytest.mark.parametrize("pedido,esperado", [
+    ("Vende 5 unidades del Cuaderno", {5}),
+    ("Vende -5 unidades del Cuaderno", set()),
+    ("vende \u22125 cuadernos", set()),
+    ("Llego un pedido, repon 1.000 unidades del Taladro", {1, 1000}),  # "un" cuenta como 1
+    ("vende un taladro", {1}),
+    ("vende cinco cuadernos", {5}),
+    ("vende 3 del producto #4", {3}),
+    ("vende 2,5 kilos", set()),
+])
+def test_cantidades_del_pedido(pedido, esperado):
+    from guardrails import cantidades_del_pedido
+
+    assert cantidades_del_pedido(pedido) == esperado
+
+
+def test_venta_negativa_corregida_por_el_modelo_se_rechaza():
+    agentes.nueva_peticion(dueno=True, pedido="Vende -5 unidades del Cuaderno universitario.")
+    r = _tool(agentes.tool_registrar_venta)("Cuaderno universitario", 5)
+    assert r.startswith("Rechazado: la cantidad 5 no aparece")
+    assert _stock("Cuaderno") == 40
+
+
+def test_cantidad_escrita_en_el_pedido_se_acepta():
+    agentes.nueva_peticion(dueno=True, pedido="Vende 5 unidades del Cuaderno universitario.")
+    _tool(agentes.tool_registrar_venta)("Cuaderno universitario", 5)
+    assert _stock("Cuaderno") == 35
