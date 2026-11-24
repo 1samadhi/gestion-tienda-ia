@@ -482,6 +482,37 @@ def observar(mensaje: str, caso: str = "chat", conversacion_id: str | None = Non
     return traza
 
 
+_ACCIONES = {
+    "registrar_venta": "venta",
+    "registrar_reposicion": "reposición",
+    "preparar_correo_a_proveedor": "correo",
+}
+
+
+def acciones_rechazadas(traza: Traza) -> list[tuple[str, str]]:
+    """Acciones que una herramienta rechazo o que fallaron en esta traza.
+
+    Sale de los eventos, no de la respuesta: el modelo puede decir que algo
+    quedo listo cuando la herramienta lo rechazo.
+    """
+    vistos, salida = set(), []
+    for e in traza.eventos:
+        nombre = e.etapa.removeprefix("tool:")
+        if nombre not in _ACCIONES:
+            continue
+        if e.detalle.startswith("Rechazado:"):
+            motivo = e.detalle.removeprefix("Rechazado:").strip()
+        elif e.estado == "error":
+            motivo = re.sub(r"^\w+(Error|Exception):\s*", "", e.detalle)
+        else:
+            continue
+        motivo = motivo.split(". No se")[0].rstrip(".")[:160]
+        if (nombre, motivo) not in vistos:
+            vistos.add((nombre, motivo))
+            salida.append((_ACCIONES[nombre], motivo))
+    return salida
+
+
 def guardar_traza(traza: Traza, archivo: Path = ARCHIVO_TRAZAS) -> None:
     """La respuesta se redacta al guardar, no antes: al dueño se le muestra
     completa (el correo de su proveedor es dato del negocio), al log no."""

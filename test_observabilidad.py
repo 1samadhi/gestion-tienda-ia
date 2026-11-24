@@ -215,3 +215,22 @@ def test_memoria_apagada_salvo_que_se_pida(monkeypatch):
     assert agentes.memoria_activa() is False
     monkeypatch.setenv("MEMORIA_CREW", "true")
     assert agentes.memoria_activa() is True
+
+
+def test_acciones_rechazadas_salen_de_la_traza_no_de_la_respuesta():
+    t = _traza("x")
+    t.respuesta_final = "El mensaje quedo listo para enviarse al proveedor."
+    for etapa, detalle, estado in [
+        ("tool:registrar_reposicion", "Rechazado: la cantidad 10 no aparece en el pedido del dueño. No se cambio nada", "ok"),
+        ("tool:registrar_reposicion", "Rechazado: la cantidad 10 no aparece en el pedido del dueño. No se cambio nada", "ok"),
+        ("tool:preparar_correo_a_proveedor", "Rechazado: 'x' no es un proveedor registrado. No se preparo nada.", "ok"),
+        ("tool:registrar_venta", "ValueError: Stock insuficiente: hay 3, se pidieron 9", "error"),
+        ("tool:consultar_stock", "Rechazado: no deberia aparecer", "ok"),
+        ("tool:registrar_venta", "Venta registrada. Cuaderno queda en 35 unidades.", "ok"),
+    ]:
+        t.agregar_evento(etapa=etapa, inicio_ms=0, duracion_ms=1, estado=estado, detalle=detalle)
+    assert obs.acciones_rechazadas(t) == [
+        ("reposición", "la cantidad 10 no aparece en el pedido del dueño"),
+        ("correo", "'x' no es un proveedor registrado"),
+        ("venta", "Stock insuficiente: hay 3, se pidieron 9"),
+    ]

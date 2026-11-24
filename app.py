@@ -35,7 +35,7 @@ from agentes import modelo
 from db import DB as RUTA_DB
 from gmail_tool import enviar_correo
 from guardrails import neutralizar_salida, sanitizar_entrada
-from observabilidad import observar
+from observabilidad import acciones_rechazadas, observar
 from stock import consultar_stock, historial_producto, productos_bajo_minimo
 
 RAIZ = Path(__file__).parent
@@ -197,6 +197,11 @@ def pagina_chat():
                     "Nada de esto se ha ejecutado todavía."
                 )
 
+            rechazos = acciones_rechazadas(traza)
+            if rechazos:
+                detalle = " · ".join(f"{accion} ({motivo})" for accion, motivo in rechazos)
+                respuesta += f"\n\n> ⚠️ **No se ejecutó:** {detalle}."
+
             resumen = (
                 f"{traza.duracion_ms / 1000:.0f} s · {traza.tokens_totales:,} tokens · "
                 f"{traza.llamadas_llm} llamadas · traza {traza.trace_id}"
@@ -341,8 +346,9 @@ def pagina_estado():
                 st.success(f"Vigente hasta {expira.strftime('%Y-%m-%d %H:%M UTC')}")
             else:
                 st.warning(
-                    f"Expirado desde {expira.strftime('%Y-%m-%d %H:%M UTC')} — "
-                    "se refresca solo al primer uso (tiene refresh_token)."
+                    f"Acceso vencido el {expira.strftime('%Y-%m-%d %H:%M UTC')}. Se renueva solo "
+                    "mientras el permiso siga vigente; con la app de Google en modo prueba el permiso "
+                    "dura 7 días. Si un envío falla: `uv run python autenticar_gmail.py`."
                 )
 
     with col_b:
@@ -363,7 +369,9 @@ def pagina_estado():
 
     st.divider()
     st.markdown("**Conexión con Groq** (esto sí gasta unos tokens; es manual a propósito)")
-    if st.button("Probar conexión ahora"):
+    if not st.session_state.dueno:
+        st.caption("Disponible con sesión de dueño.")
+    elif st.button("Probar conexión ahora"):
         with st.spinner("Probando..."):
             try:
                 llm = modelo()
