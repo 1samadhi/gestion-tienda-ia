@@ -42,7 +42,7 @@ RAIZ = Path(__file__).parent
 TOKEN_GMAIL = RAIZ / "gmail_token.json"
 MEMORIA_DIR = Path.home() / ".local" / "share" / "gestion-tienda-ia" / "memory"
 
-st.set_page_config(page_title="Gestión de Tienda IA", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Tienda IA", page_icon=":material/storefront:", layout="wide")
 st.markdown(estilo.CSS, unsafe_allow_html=True)
 
 if "conversacion_id" not in st.session_state:
@@ -55,46 +55,19 @@ if "dueno" not in st.session_state:
     st.session_state.dueno = False
     st.session_state.intentos = 0
 
-with st.sidebar:
-    st.markdown("### 🔐 Acceso")
-    if st.session_state.dueno:
-        st.success("Sesión de dueño: puedes vender y aprobar.")
-        if st.button("Cerrar sesión", width="stretch"):
-            st.session_state.dueno = False
-            st.rerun()
-    elif not acceso.hay_clave():
-        st.info("Modo consulta. Para habilitar ventas: `uv run python acceso.py`.")
-    elif st.session_state.intentos >= acceso.MAX_INTENTOS:
-        st.error("Demasiados intentos. Recarga la página para reintentar.")
-    else:
-        st.caption("Sin sesión el chat solo consulta el stock.")
-        with st.form("login"):
-            clave = st.text_input("Clave del dueño", type="password")
-            if st.form_submit_button("Entrar", type="primary", width="stretch"):
-                if acceso.verificar_clave(clave):
-                    st.session_state.dueno, st.session_state.intentos = True, 0
-                    st.rerun()
-                st.session_state.intentos += 1
-                st.error("Clave incorrecta.")
+# --- Stock: directo a la base, sin LLM -------------------------------------
 
-st.markdown(estilo.encabezado(st.session_state.dueno), unsafe_allow_html=True)
-
-tab_stock, tab_chat, tab_logs, tab_estado = st.tabs(
-    ["📋 Stock", "💬 Chat", "📊 Observabilidad", "🩺 Estado del sistema"]
-)
-
-# --- Pestana 1: stock directo a la base, sin LLM -----------------------
-
-with tab_stock:
+def pagina_stock():
+    estilo.encabezado_pagina("Stock", "Inventario y operaciones por aprobar. No usa IA.", st.session_state.dueno)
     productos = consultar_stock("")
     bajos = productos_bajo_minimo()
     por_aprobar = pendientes.listar()
-    st.markdown(estilo.franja([
+    estilo.indicadores([
         ("Productos", str(len(productos))),
         ("Unidades en stock", f"{sum(p.stock_actual for p in productos):,}".replace(",", ".")),
         ("Bajo el mínimo", str(len(bajos))),
         ("Por aprobar", str(len(por_aprobar))),
-    ]), unsafe_allow_html=True)
+    ])
 
     if por_aprobar:
         nota = ("Propuestas por un agente; no se ejecutan hasta que las apruebes."
@@ -118,8 +91,7 @@ with tab_stock:
                 pendientes.descartar(op["id"])
                 st.rerun()
 
-    st.markdown(estilo.seccion("Stock", "actual", "directo desde la base, sin IA"),
-                unsafe_allow_html=True)
+    st.markdown(estilo.seccion("Productos"), unsafe_allow_html=True)
     st.markdown(estilo.tarjetas(productos), unsafe_allow_html=True)
 
     st.markdown(estilo.seccion("Historial de", "movimientos"), unsafe_allow_html=True)
@@ -135,12 +107,10 @@ with tab_stock:
                 width="stretch", hide_index=True,
             )
 
-# --- Pestana 2: chat, pasa por los agentes (CrewAI + Groq) --------------
+# --- Chat: pasa por los agentes (CrewAI + Groq) ---------------------------
 
-with tab_chat:
-    st.markdown(estilo.seccion("Chat con los", "agentes",
-                               "cada mensaje usa IA (Groq); para solo mirar el stock usa la pestaña Stock"),
-                unsafe_allow_html=True)
+def pagina_chat():
+    estilo.encabezado_pagina("Chat", "Pedidos en lenguaje natural. Cada mensaje usa IA (Groq).", st.session_state.dueno)
 
     for autor, texto, resumen in st.session_state.mensajes:
         with st.chat_message(autor):
@@ -246,9 +216,10 @@ with tab_chat:
         )
         st.rerun()
 
-# --- Pestana 3: tablero de observabilidad sobre logs/trazas.jsonl -------
+# --- Observabilidad: tablero sobre logs/trazas.jsonl ----------------------
 
-with tab_logs:
+def pagina_observabilidad():
+    estilo.encabezado_pagina("Observabilidad", "Métricas y trazas guardadas. Mirar no gasta tokens.", st.session_state.dueno)
     import pandas as pd
 
     import dashboard as tablero
@@ -258,7 +229,7 @@ with tab_logs:
     if not trazas:
         st.info("Todavía no hay trazas. Usa el chat o corre `uv run python bateria.py --todos`.")
     else:
-        st.caption(f"{len(trazas)} trazas en `{ARCHIVO_TRAZAS.name}`. Mirar no gasta tokens.")
+        st.caption(f"{len(trazas)} trazas en `{ARCHIVO_TRAZAS.name}`")
         f1, f2 = st.columns(2)
         configs = sorted({tablero.configuracion(t) for t in trazas})
         casos = sorted({tablero.caso_base(t) for t in trazas})
@@ -291,7 +262,7 @@ with tab_logs:
             })
             casos_df.index.name = "Caso"
             st.bar_chart(casos_df[["p50 (s)", "p95 (s)"]], stack=False, horizontal=True,
-                         color=["#0B7BD3", "#9CCBF2"], y_label="", x_label="segundos",
+                         color=["#4F46E5", "#C7D2FE"], y_label="", x_label="segundos",
                          height=max(260, 34 * len(casos_df)))
 
             g1, g2 = st.columns(2)
@@ -300,14 +271,14 @@ with tab_logs:
                             unsafe_allow_html=True)
                 etapas = pd.DataFrame(tablero.tiempo_por_etapa(vista))
                 if not etapas.empty:
-                    st.bar_chart(etapas.set_index("etapa"), horizontal=True, color="#0B7BD3",
+                    st.bar_chart(etapas.set_index("etapa"), horizontal=True, color="#4F46E5",
                                  y_label="", x_label="segundos")
             with g2:
                 st.markdown(estilo.seccion("Tokens por", "rol", "promedio por petición"),
                             unsafe_allow_html=True)
                 roles = pd.DataFrame(tablero.tokens_por_rol(vista))
                 if not roles.empty:
-                    st.bar_chart(roles.set_index("rol"), horizontal=True, color="#2BA36B",
+                    st.bar_chart(roles.set_index("rol"), horizontal=True, color="#71717A",
                                  y_label="", x_label="tokens")
 
             st.markdown(estilo.seccion("Cada petición en el", "tiempo",
@@ -349,11 +320,10 @@ with tab_logs:
                        f"{total_segundos:.0f} s")
             st.dataframe(list(reversed(st.session_state.registro)), width="stretch", hide_index=True)
 
-# --- Pestana 4: estado del sistema, sin gastar tokens -------------------
+# --- Estado del sistema: chequeos locales ---------------------------------
 
-with tab_estado:
-    st.markdown(estilo.seccion("Estado del", "sistema", "chequeos locales, no llaman a Groq"),
-                unsafe_allow_html=True)
+def pagina_estado():
+    estilo.encabezado_pagina("Estado del sistema", "Chequeos locales. Solo el botón de Groq gasta tokens.", st.session_state.dueno)
 
     col_a, col_b, col_c = st.columns(3)
 
@@ -403,3 +373,39 @@ with tab_estado:
                 st.success(f"Groq responde — {seg:.1f}s")
             except Exception as e:
                 st.error(f"{type(e).__name__}: {e}")
+
+
+# --- Navegacion y acceso ----------------------------------------------------
+
+st.logo(str(RAIZ / "logo.svg"), size="large")
+navegacion = st.navigation([
+    st.Page(pagina_stock, title="Stock", icon=":material/inventory_2:", url_path="stock", default=True),
+    st.Page(pagina_chat, title="Chat", icon=":material/forum:", url_path="chat"),
+    st.Page(pagina_observabilidad, title="Observabilidad", icon=":material/monitoring:", url_path="observabilidad"),
+    st.Page(pagina_estado, title="Estado del sistema", icon=":material/settings_heart:", url_path="estado"),
+])
+
+with st.sidebar:
+    st.markdown('<div class="acceso-titulo">Acceso</div>', unsafe_allow_html=True)
+    if st.session_state.dueno:
+        st.markdown('<div class="acceso-ok">Sesión de dueño activa</div>', unsafe_allow_html=True)
+        if st.button("Cerrar sesión", icon=":material/logout:", width="stretch"):
+            st.session_state.dueno = False
+            st.rerun()
+    elif not acceso.hay_clave():
+        st.caption("Modo consulta. Para habilitar ventas: `uv run python acceso.py`.")
+    elif st.session_state.intentos >= acceso.MAX_INTENTOS:
+        st.error("Demasiados intentos. Recarga la página para reintentar.")
+    else:
+        st.caption("Sin sesión el chat solo consulta el stock.")
+        with st.form("login", border=False):
+            clave = st.text_input("Clave del dueño", type="password", label_visibility="collapsed",
+                                  placeholder="Clave del dueño")
+            if st.form_submit_button("Entrar", type="primary", icon=":material/lock_open:", width="stretch"):
+                if acceso.verificar_clave(clave):
+                    st.session_state.dueno, st.session_state.intentos = True, 0
+                    st.rerun()
+                st.session_state.intentos += 1
+                st.error("Clave incorrecta.")
+
+navegacion.run()
