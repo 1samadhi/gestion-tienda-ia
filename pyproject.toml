@@ -1,7 +1,7 @@
 [project]
 name = "gestion-tienda-ia"
 version = "0.1.0"
-description = "Gestion de tienda con agentes CrewAI - EP2 ISY0101 Duoc UC"
+description = "Gestion de tienda con agentes CrewAI, observabilidad y seguridad - ISY0101 Duoc UC"
 requires-python = ">=3.11"
 dependencies = [
     "crewai[litellm]>=1.15.0",
