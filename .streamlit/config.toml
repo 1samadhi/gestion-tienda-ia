@@ -1,16 +1,23 @@
 [theme]
 base = "light"
-primaryColor = "#0B7BD3"
-backgroundColor = "#F4F7FB"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1A2433"
+primaryColor = "#4F46E5"
+backgroundColor = "#FAFAFA"
+secondaryBackgroundColor = "#F4F4F5"
+textColor = "#18181B"
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
-baseRadius = "10px"
-borderColor = "#E3E9F1"
+baseRadius = "8px"
+borderColor = "#E4E4E7"
 showWidgetBorder = true
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F4F5"
 
 [server]
 fileWatcherType = "none"
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "viewer"

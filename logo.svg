@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="48" viewBox="0 0 240 48">
+  <rect x="2" y="6" width="36" height="36" rx="9" fill="#4F46E5"/>
+  <path d="M11 19.5 20 15l9 4.5v10L20 34l-9-4.5z" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M11 19.5 20 24l9-4.5M20 24v10" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/>
+  <text x="50" y="31" font-family="Inter, Helvetica, Arial, sans-serif" font-size="19" font-weight="700" fill="#18181B">Tienda</text>
+  <text x="117" y="31" font-family="Inter, Helvetica, Arial, sans-serif" font-size="19" font-weight="700" fill="#4F46E5">IA</text>
+</svg>
