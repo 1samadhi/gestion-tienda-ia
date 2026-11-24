@@ -1216,18 +1216,21 @@ wheels = [
 name = "gestion-tienda-ia"
 version = "0.1.0"
 source = { virtual = "." }
+default-groups = ["dev", "memoria"]
 dependencies = [
     { name = "crewai", extra = ["litellm"] },
     { name = "google-api-python-client" },
     { name = "google-auth-oauthlib" },
     { name = "python-dotenv" },
-    { name = "sentence-transformers" },
     { name = "streamlit" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+]
+memoria = [
+    { name = "sentence-transformers" },
 ]
 
 [package.metadata]
@@ -1236,12 +1239,12 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.140.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "sentence-transformers", specifier = ">=3.0.0" },
     { name = "streamlit", specifier = ">=1.38.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]
+memoria = [{ name = "sentence-transformers", specifier = ">=3.0.0" }]
 
 [[package]]
 name = "google-api-core"
