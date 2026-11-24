@@ -70,6 +70,27 @@ uv run python observabilidad.py [trace_id]                    # ver trazas y mé
 `bateria.py` reinicia la base antes de cada caso, verifica la respuesta contra
 SQLite y nunca aprueba pendientes (no manda correos). Resultados: `PRUEBAS.md`.
 
+## Desplegar en AWS (Learner Lab)
+
+```bash
+./aws-desplegar.sh              # simula
+./aws-desplegar.sh --aplicar    # EC2 + security group + 2 parámetros, espera a que responda
+./aws-desplegar.sh --estado     # IP y salud
+./aws-desplegar.sh --reanudar   # tras reiniciar el lab: prende y reabre el puerto a tu IP
+./aws-desplegar.sh --detener
+```
+
+```mermaid
+flowchart LR
+  U[Navegador] -- "8501, solo tu IP" --> EC2[EC2 t3.small · Streamlit]
+  EC2 -- "rol de la instancia" --> PS[(Parameter Store<br/>GROQ_API_KEY · DUENO_CLAVE_HASH)]
+  EC2 --> G[Groq]
+```
+
+Sin SSH (se entra por SSM). Los secretos se copian de `.env` como SecureString y no
+pasan por el user-data. El servidor se instala sin el grupo `memoria` (sin torch:
+1,2 GB en vez de 6,7 GB) y sin Gmail: aprobar un correo ahí falla con aviso.
+
 ## Observabilidad
 
 | Métrica | De dónde sale |
@@ -129,6 +150,7 @@ la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
 | `dashboard.py` | agregaciones del tablero (pestaña Observabilidad) |
 | `estilo.py` | CSS y bloques visuales de la app |
 | `acceso.py` | clave del dueño |
+| `aws-desplegar.sh`, `aws-user-data.sh` | despliegue en AWS |
 | `guardrails.py` | filtro de entrada, PII, salida segura |
 | `observabilidad.py` | trazas, métricas, analizador |
 | `bateria.py` | casos de medición con verificación |
