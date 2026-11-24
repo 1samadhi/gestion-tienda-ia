@@ -35,7 +35,7 @@ EOF
 chown tienda:tienda "$DIR/.env"
 
 # Sin el grupo "memoria": no se instala torch.
-sudo -u tienda -H bash -c "cd $DIR && uv sync --frozen --no-default-groups && [ -f tienda.db ] || uv run python db.py"
+sudo -u tienda -H bash -c "cd $DIR && uv sync --frozen --no-default-groups && { [ -f tienda.db ] || uv run --frozen --no-default-groups python db.py; }"
 
 cat > /etc/systemd/system/tienda-ia.service <<EOF
 [Unit]
