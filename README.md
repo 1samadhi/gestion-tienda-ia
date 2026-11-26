@@ -28,7 +28,7 @@ flowchart LR
 
 La orden al proveedor la dispara Python (`stock ≤ mínimo`), no el LLM.
 Reponer stock y enviar correos **quedan pendientes** hasta que el dueño los
-aprueba en la pestaña Stock (`pendientes.py`).
+aprueba en la página Stock (`pendientes.py`).
 
 ## Una petición, paso a paso
 
@@ -147,7 +147,7 @@ la validación en las tools. Detalle: `SEGURIDAD-OWASP.md`.
 | `agentes.py` | roles, tools, manager, fallback de modelos |
 | `stock.py`, `db.py` | dominio en Python puro, sin LLM |
 | `pendientes.py` | acciones que esperan aprobación del dueño |
-| `dashboard.py` | agregaciones del tablero (pestaña Observabilidad) |
+| `dashboard.py` | agregaciones del tablero (página Observabilidad) |
 | `estilo.py` | CSS y bloques visuales de la app |
 | `acceso.py` | clave del dueño |
 | `aws-desplegar.sh`, `aws-user-data.sh` | despliegue en AWS |
