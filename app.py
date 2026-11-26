@@ -58,7 +58,7 @@ if "dueno" not in st.session_state:
 # --- Stock: directo a la base, sin LLM -------------------------------------
 
 def pagina_stock():
-    estilo.encabezado_pagina("Stock", "Inventario y operaciones por aprobar. No usa IA.", st.session_state.dueno)
+    estilo.encabezado_pagina("Stock", "Inventario y operaciones por aprobar.", st.session_state.dueno)
     productos = consultar_stock("")
     bajos = productos_bajo_minimo()
     por_aprobar = pendientes.listar()
