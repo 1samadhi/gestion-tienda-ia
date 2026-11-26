@@ -70,6 +70,14 @@ uv run python observabilidad.py [trace_id]                    # ver trazas y mé
 `bateria.py` reinicia la base antes de cada caso, verifica la respuesta contra
 SQLite y nunca aprueba pendientes (no manda correos). Resultados: `PRUEBAS.md`.
 
+## Notebook
+
+[`eft.ipynb`](eft.ipynb) ([abrir en Colab](https://colab.research.google.com/github/1samadhi/gestion-tienda-ia/blob/main/eft.ipynb))
+recorre el proyecto con el mismo código: prompts, herramientas y permisos,
+guardarraíles, el agente con el modelo real y las métricas sobre
+`evidencia/trazas.jsonl` (trazas de la batería, con PII redactada). Solo la
+sección 6 gasta tokens y viene apagada (`GASTAR_TOKENS`).
+
 ## Observabilidad
 
 | Métrica | De dónde sale |
