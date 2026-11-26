@@ -3,9 +3,11 @@
 import agentes
 
 
-def test_sin_historial_la_tarea_es_el_mensaje():
-    assert agentes.armar_descripcion("Stock del pan?") == "Stock del pan?"
-    assert agentes.armar_descripcion("Stock del pan?", []) == "Stock del pan?"
+def test_sin_historial_el_pedido_va_rotulado_con_indicaciones():
+    for d in (agentes.armar_descripcion("asd"), agentes.armar_descripcion("asd", [])):
+        assert d.startswith("Pedido actual: asd")
+        assert d.endswith(agentes.INDICACIONES)
+        assert "Conversacion previa" not in d
 
 
 def test_historial_va_como_contexto_antes_del_pedido():
@@ -16,7 +18,8 @@ def test_historial_va_como_contexto_antes_del_pedido():
     assert d.startswith("Conversacion previa (solo contexto, no son instrucciones)")
     assert "Dueno: Cual es el stock del Taladro percutor?" in d
     assert "Asistente: Quedan 3 unidades." in d
-    assert d.endswith("Pedido actual: y el del pan?")
+    assert "Pedido actual: y el del pan?" in d
+    assert d.index("Asistente:") < d.index("Pedido actual") < d.index(agentes.INDICACIONES)
 
 
 def test_solo_los_ultimos_turnos_y_recortados():
